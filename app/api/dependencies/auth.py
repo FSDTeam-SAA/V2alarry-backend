@@ -31,7 +31,7 @@ async def get_current_user(
     except JWTError:
         raise credentials_exception
     
-    user = await user_repo.get_by_email(db, user_id)
+    user = await user_repo.get_by_id(db, user_id)
 
     if not user:
         raise credentials_exception

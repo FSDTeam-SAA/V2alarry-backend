@@ -8,7 +8,7 @@ class UserRepository:
         result = await db.execute(select(User).where(User.email == email))
         return result.scalar_one_or_none()
     
-    async def create(self, db: AsyncSession, email: str, user: User):
+    async def create(self, db: AsyncSession, user: User):
         db.add(user)
         await db.commit()
         await db.refresh(user)
