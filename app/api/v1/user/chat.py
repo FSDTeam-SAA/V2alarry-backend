@@ -1,11 +1,11 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException
 from typing import Optional, List
 from app.services.chat_history_service import ChatHistoryService
 from app.workflows.chat_workflow import ChatWorkflow
 from app.api.dependencies.auth import get_current_user
 from app.models.user import User
-from pydantic import BaseModel
-from datetime import datetime
+from pydantic import BaseModel, field_validator
+import uuid
 
 router = APIRouter(prefix="/chat", tags=["User Chat"])
 
@@ -13,6 +13,20 @@ router = APIRouter(prefix="/chat", tags=["User Chat"])
 class ChatRequest(BaseModel):
     message: str
     conversation_id: Optional[str] = None
+
+    @field_validator("conversation_id", mode="before")
+    @classmethod
+    def validate_conversation_id(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        if isinstance(value, str):
+            value = value.strip()
+            if not value:
+                return None
+        try:
+            return str(uuid.UUID(str(value)))
+        except (ValueError, TypeError) as exc:
+            raise ValueError("conversation_id must be a valid UUID") from exc
 
 class ChatResponse(BaseModel):
     response: str
@@ -60,6 +74,8 @@ async def chat(
             message_id=result.get("message_id", ""),
             metadata=result.get("metadata", {})
         )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error processing message: {str(e)}")
 
@@ -70,33 +86,19 @@ async def get_conversations(
 ):
     """Get all conversations for the current user"""
     try:
-        # Get conversations from database
-        db = chat_history_service.db
-        from app.models.conversation import Conversation
-        from sqlalchemy import func
-        
-        conversations = db.query(
-            Conversation,
-            func.count(Message.id).label('message_count')
-        ).outerjoin(
-            Message, Message.conversation_id == Conversation.id
-        ).filter(
-            Conversation.user_id == current_user.id
-        ).group_by(
-            Conversation.id
-        ).order_by(
-            Conversation.updated_at.desc()
-        ).all()
-        
+        conversations = await chat_history_service.get_user_conversations(
+            user_id=str(current_user.id)
+        )
+
         return [
             ConversationResponse(
-                id=str(conv.id),
-                title=conv.title,
-                created_at=conv.created_at.isoformat(),
-                updated_at=conv.updated_at.isoformat(),
-                message_count=count or 0
+                id=conv["id"],
+                title=conv["title"],
+                created_at=conv["created_at"],
+                updated_at=conv["updated_at"],
+                message_count=conv["message_count"]
             )
-            for conv, count in conversations
+            for conv in conversations
         ]
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error fetching conversations: {str(e)}")
@@ -115,7 +117,7 @@ async def get_conversation_messages(
         )
         return messages
     except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error fetching messages: {str(e)}")
 
@@ -127,23 +129,16 @@ async def delete_conversation(
 ):
     """Delete a conversation and all its messages"""
     try:
-        db = chat_history_service.db
-        from app.models.conversation import Conversation
-        
-        conversation = db.query(Conversation).filter(
-            Conversation.id == uuid.UUID(conversation_id),
-            Conversation.user_id == current_user.id
-        ).first()
-        
-        if not conversation:
+        deleted = await chat_history_service.delete_conversation(
+            conversation_id=conversation_id,
+            user_id=str(current_user.id)
+        )
+
+        if not deleted:
             raise HTTPException(status_code=404, detail="Conversation not found")
-        
-        # Delete messages first (cascade would handle this)
-        from app.models.message import Message
-        db.query(Message).filter(Message.conversation_id == conversation.id).delete()
-        db.delete(conversation)
-        db.commit()
-        
+
         return {"message": "Conversation deleted successfully"}
+    except ValueError:
+        raise HTTPException(status_code=400, detail="conversation_id must be a valid UUID")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error deleting conversation: {str(e)}")

@@ -49,7 +49,7 @@ class DocumentService:
                 filename=filename,
                 file_type=file_type,
                 file_path=str(file_path),
-                uploaded_by=uuid.UUID(uploaded_by),
+                uploaded_by=int(uploaded_by),
                 status="processing"
             )
             db.add(document)
@@ -98,8 +98,9 @@ class DocumentService:
             }
             
         except Exception as e:
-            document.status = "failed"
-            db.commit()
+            if 'document' in locals() and document is not None:
+                document.status = "failed"
+                db.commit()
             raise e
         finally:
             db.close()

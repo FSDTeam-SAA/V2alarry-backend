@@ -315,3 +315,19 @@ alembic revision --autogenerate -m "Describe your changes"
 # 3. Apply the migration
 alembic upgrade head
 ```
+
+
+
+## How this is working 
+Upload: Admin uploads a file (PDF/DOCX/TXT/MD)
+Extract: Text is extracted from the file
+Chunk: Text is split into ~500-word chunks with overlap
+Embed: Each chunk is converted to a vector (384-dim) using all-MiniLM-L6-v2
+Store: Vectors + metadata saved to Qdrant cloud
+Chunks + doc metadata saved to PostgreSQL
+At query time (chat):
+User message → embedded to vector
+Qdrant finds top 5 similar chunks
+Chunks + message sent to OpenAI GPT
+LLM answers using retrieved context
+That's RAG: Retrieval-Augmented Generation — fetch relevant docs first, then generate.

@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     
     # Vector DB
     VECTOR_DB_URL: str = "http://localhost:6333"
+    VECTOR_DB_API_KEY: str = ""
     VECTOR_DB_COLLECTION: str = "knowledge_base"
     
     # Embeddings

@@ -2,12 +2,25 @@ from sqlalchemy.orm import Session
 from app.db.session import SessionLocal
 from app.models.conversation import Conversation
 from app.models.message import Message
+from sqlalchemy import func
 from typing import List, Dict, Any, Optional
 import uuid
 from functools import lru_cache
 
 
 class ChatHistoryService:
+    @staticmethod
+    def _parse_conversation_id(conversation_id: Optional[str]) -> Optional[uuid.UUID]:
+        if conversation_id is None:
+            return None
+        normalized_id = conversation_id.strip() if isinstance(conversation_id, str) else str(conversation_id)
+        if not normalized_id:
+            return None
+        try:
+            return uuid.UUID(normalized_id)
+        except (ValueError, TypeError) as exc:
+            raise ValueError("conversation_id must be a valid UUID") from exc
+
     async def get_or_create_conversation(
         self, 
         user_id: str, 
@@ -16,10 +29,12 @@ class ChatHistoryService:
         """Get existing conversation or create new one"""
         db = SessionLocal()
         try:
-            if conversation_id:
+            parsed_conversation_id = self._parse_conversation_id(conversation_id)
+
+            if parsed_conversation_id:
                 conv = db.query(Conversation).filter(
-                    Conversation.id == uuid.UUID(conversation_id),
-                    Conversation.user_id == uuid.UUID(user_id)
+                    Conversation.id == parsed_conversation_id,
+                    Conversation.user_id == int(user_id)
                 ).first()
                 
                 if conv:
@@ -31,7 +46,7 @@ class ChatHistoryService:
             
             # Create new conversation
             conv = Conversation(
-                user_id=uuid.UUID(user_id),
+                user_id=int(user_id),
                 title="New Conversation"
             )
             db.add(conv)
@@ -100,7 +115,7 @@ class ChatHistoryService:
             messages = db.query(Message).join(
                 Conversation, Conversation.id == Message.conversation_id
             ).filter(
-                Conversation.user_id == uuid.UUID(user_id)
+                Conversation.user_id == int(user_id)
             ).order_by(
                 Message.created_at.desc()
             ).limit(limit).all()
@@ -128,11 +143,15 @@ class ChatHistoryService:
         """Get all messages in a conversation"""
         db = SessionLocal()
         try:
+            parsed_conversation_id = self._parse_conversation_id(conversation_id)
+            if parsed_conversation_id is None:
+                raise ValueError("conversation_id must be a valid UUID")
+
             messages = db.query(Message).join(
                 Conversation, Conversation.id == Message.conversation_id
             ).filter(
-                Message.conversation_id == uuid.UUID(conversation_id),
-                Conversation.user_id == uuid.UUID(user_id)
+                Message.conversation_id == parsed_conversation_id,
+                Conversation.user_id == int(user_id)
             ).order_by(
                 Message.created_at.asc()
             ).all()
@@ -148,6 +167,60 @@ class ChatHistoryService:
             ]
         finally:
             db.close()
+
+    async def get_user_conversations(self, user_id: str) -> List[Dict[str, Any]]:
+        """Get all conversations for a user with message counts"""
+        db = SessionLocal()
+        try:
+            conversations = db.query(
+                Conversation,
+                func.count(Message.id).label("message_count")
+            ).outerjoin(
+                Message, Message.conversation_id == Conversation.id
+            ).filter(
+                Conversation.user_id == int(user_id)
+            ).group_by(
+                Conversation.id
+            ).order_by(
+                Conversation.updated_at.desc()
+            ).all()
+
+            return [
+                {
+                    "id": str(conv.id),
+                    "title": conv.title,
+                    "created_at": conv.created_at.isoformat(),
+                    "updated_at": conv.updated_at.isoformat(),
+                    "message_count": count or 0,
+                }
+                for conv, count in conversations
+            ]
+        finally:
+            db.close()
+
+    async def delete_conversation(self, conversation_id: str, user_id: str) -> bool:
+        """Delete a conversation and all its messages"""
+        db = SessionLocal()
+        try:
+            parsed_conversation_id = self._parse_conversation_id(conversation_id)
+            if parsed_conversation_id is None:
+                raise ValueError("conversation_id must be a valid UUID")
+
+            conversation = db.query(Conversation).filter(
+                Conversation.id == parsed_conversation_id,
+                Conversation.user_id == int(user_id)
+            ).first()
+
+            if not conversation:
+                return False
+
+            db.query(Message).filter(Message.conversation_id == conversation.id).delete()
+            db.delete(conversation)
+            db.commit()
+            return True
+        finally:
+            db.close()
+
     @lru_cache()
     def get_chat_history_service():
         return ChatHistoryService()

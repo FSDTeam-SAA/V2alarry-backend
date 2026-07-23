@@ -8,15 +8,22 @@ from app.core.config import settings
 
 class VectorStore:
     def __init__(self):
-        self.client = QdrantClient(
-            url=settings.VECTOR_DB_URL,
-            prefer_grpc=False
-        )
         self.collection_name = settings.VECTOR_DB_COLLECTION
         self.vector_size = settings.EMBEDDING_DIMENSION
-        
-        # Create collection if it doesn't exist
-        self._ensure_collection()
+        self._client = None
+    
+    @property
+    def client(self):
+        if self._client is None:
+            kwargs = {
+                "url": settings.VECTOR_DB_URL,
+                "prefer_grpc": False,
+            }
+            if settings.VECTOR_DB_API_KEY:
+                kwargs["api_key"] = settings.VECTOR_DB_API_KEY
+            self._client = QdrantClient(**kwargs)
+            self._ensure_collection()
+        return self._client
     
     def _ensure_collection(self):
         """Create collection if not exists"""

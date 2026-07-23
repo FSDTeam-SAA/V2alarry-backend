@@ -5,6 +5,7 @@ from app.api.v1.user import chat_router
 from app.api.v1.auth import router as auth_router
 from app.api.v1.users import router as users_router
 from app.core.config import settings
+from app.db.database import ensure_schema_compatibility
 
 app = FastAPI(
     title="V2alarry Backend",
@@ -26,6 +27,11 @@ app.include_router(auth_router, prefix="/api/v1/auth", tags=["Authentication"])
 app.include_router(users_router, prefix="/api/v1/users", tags=["Users"])
 app.include_router(documents_router, prefix="/api/v1", tags=["Admin"])
 app.include_router(chat_router, prefix="/api/v1", tags=["User"])
+
+
+@app.on_event("startup")
+async def startup_event():
+    ensure_schema_compatibility()
 
 @app.get("/")
 async def root():
