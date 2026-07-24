@@ -1,14 +1,17 @@
-from sqlalchemy.orm import Session
-from app.db.session import SessionLocal
+from sqlalchemy import select, func, delete
+from sqlalchemy.ext.asyncio import AsyncSession
+from app.db.database import AsyncSessionLocal
 from app.models.conversation import Conversation
 from app.models.message import Message
-from sqlalchemy import func
 from typing import List, Dict, Any, Optional
 import uuid
 from functools import lru_cache
 
 
 class ChatHistoryService:
+    def __init__(self):
+        pass
+
     @staticmethod
     def _parse_conversation_id(conversation_id: Optional[str]) -> Optional[uuid.UUID]:
         if conversation_id is None:
@@ -22,168 +25,186 @@ class ChatHistoryService:
             raise ValueError("conversation_id must be a valid UUID") from exc
 
     async def get_or_create_conversation(
-        self, 
-        user_id: str, 
-        conversation_id: Optional[str] = None
+        self,
+        user_id: str,
+        conversation_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Get existing conversation or create new one"""
-        db = SessionLocal()
+        parsed_conversation_id = self._parse_conversation_id(conversation_id)
+        db = AsyncSessionLocal()
         try:
-            parsed_conversation_id = self._parse_conversation_id(conversation_id)
-
             if parsed_conversation_id:
-                conv = db.query(Conversation).filter(
-                    Conversation.id == parsed_conversation_id,
-                    Conversation.user_id == int(user_id)
-                ).first()
-                
+                result = await db.execute(
+                    select(Conversation).where(
+                        Conversation.id == parsed_conversation_id,
+                        Conversation.user_id == int(user_id),
+                    )
+                )
+                conv = result.scalar_one_or_none()
                 if conv:
                     return {
                         "id": str(conv.id),
                         "title": conv.title,
-                        "created_at": conv.created_at.isoformat()
+                        "created_at": conv.created_at.isoformat(),
                     }
-            
-            # Create new conversation
+
             conv = Conversation(
                 user_id=int(user_id),
-                title="New Conversation"
+                title="New Conversation",
             )
             db.add(conv)
-            db.commit()
-            db.refresh(conv)
-            
+            await db.commit()
+            await db.refresh(conv)
+
             return {
                 "id": str(conv.id),
                 "title": conv.title,
-                "created_at": conv.created_at.isoformat()
+                "created_at": conv.created_at.isoformat(),
             }
         finally:
-            db.close()
-    
-    async def save_message(
+            await db.close()
+
+    async def save_conversation_turn(
         self,
         user_id: str,
         conversation_id: Optional[str],
-        role: str,
-        content: str,
-        metadata: Optional[Dict] = None
+        user_message: str,
+        assistant_response: str,
+        metadata: Optional[Dict] = None,
     ) -> Dict[str, Any]:
-        """Save a message to conversation"""
-        db = SessionLocal()
+        db = AsyncSessionLocal()
         try:
-            # Get or create conversation
             conv = await self.get_or_create_conversation(user_id, conversation_id)
-            
-            # Create message
-            message = Message(
-                conversation_id=uuid.UUID(conv["id"]),
-                role=role,
-                content=content,
-                metadata=metadata or {}
+            conv_uuid = uuid.UUID(conv["id"])
+
+            user_msg = Message(
+                conversation_id=conv_uuid,
+                role="user",
+                content=user_message,
+                metadata=metadata or {},
             )
-            db.add(message)
-            db.commit()
-            db.refresh(message)
-            
-            # Update conversation title if first message
-            if role == "user":
-                conv_obj = db.query(Conversation).filter(
-                    Conversation.id == uuid.UUID(conv["id"])
-                ).first()
-                if conv_obj and conv_obj.title == "New Conversation":
-                    # Use first few words as title
-                    title = content[:50] + ("..." if len(content) > 50 else "")
+            db.add(user_msg)
+
+            assistant_msg = Message(
+                conversation_id=conv_uuid,
+                role="assistant",
+                content=assistant_response,
+                metadata={
+                    "retrieved_docs": (metadata or {}).get("docs_retrieved", 0),
+                    "context_length": (metadata or {}).get("context_length", 0),
+                },
+            )
+            db.add(assistant_msg)
+
+            if conv["title"] == "New Conversation":
+                result = await db.execute(
+                    select(Conversation).where(Conversation.id == conv_uuid)
+                )
+                conv_obj = result.scalar_one_or_none()
+                if conv_obj:
+                    from app.core.config import settings
+                    title = user_message[:settings.TITLE_TRUNCATE_LENGTH] + (
+                        "..." if len(user_message) > settings.TITLE_TRUNCATE_LENGTH else ""
+                    )
                     conv_obj.title = title
-                    db.commit()
-            
+
+            await db.commit()
+            await db.refresh(user_msg)
+
             return {
-                "id": str(message.id),
-                "conversation_id": conv["id"],
-                "role": message.role,
-                "content": message.content,
-                "created_at": message.created_at.isoformat()
+                "id": str(user_msg.id),
+                "conversation_id": str(conv_uuid),
+                "role": user_msg.role,
+                "content": user_msg.content,
+                "created_at": user_msg.created_at.isoformat(),
             }
         finally:
-            db.close()
-    
-    async def get_user_history(self, user_id: str, limit: int = 10) -> List[Dict]:
-        """Get user's conversation history"""
-        db = SessionLocal()
-        try:
-            # Get recent messages from all conversations
-            messages = db.query(Message).join(
-                Conversation, Conversation.id == Message.conversation_id
-            ).filter(
-                Conversation.user_id == int(user_id)
-            ).order_by(
-                Message.created_at.desc()
-            ).limit(limit).all()
-            
-            # Reverse to get chronological order
-            messages.reverse()
-            
-            return [
-                {
-                    "role": msg.role,
-                    "content": msg.content,
-                    "conversation_id": str(msg.conversation_id),
-                    "created_at": msg.created_at.isoformat()
-                }
-                for msg in messages
-            ]
-        finally:
-            db.close()
-    
-    async def get_conversation_messages(
-        self, 
-        conversation_id: str, 
-        user_id: str
-    ) -> List[Dict]:
-        """Get all messages in a conversation"""
-        db = SessionLocal()
-        try:
-            parsed_conversation_id = self._parse_conversation_id(conversation_id)
-            if parsed_conversation_id is None:
-                raise ValueError("conversation_id must be a valid UUID")
+            await db.close()
 
-            messages = db.query(Message).join(
-                Conversation, Conversation.id == Message.conversation_id
-            ).filter(
-                Message.conversation_id == parsed_conversation_id,
-                Conversation.user_id == int(user_id)
-            ).order_by(
-                Message.created_at.asc()
-            ).all()
-            
+    async def get_conversation_messages(
+        self,
+        conversation_id: str,
+        user_id: str,
+    ) -> List[Dict]:
+        parsed_conversation_id = self._parse_conversation_id(conversation_id)
+        if parsed_conversation_id is None:
+            raise ValueError("conversation_id must be a valid UUID")
+
+        db = AsyncSessionLocal()
+        try:
+            result = await db.execute(
+                select(Message)
+                .join(Conversation, Conversation.id == Message.conversation_id)
+                .where(
+                    Message.conversation_id == parsed_conversation_id,
+                    Conversation.user_id == int(user_id),
+                )
+                .order_by(Message.created_at.asc())
+            )
+            messages = result.scalars().all()
+
             return [
                 {
                     "id": str(msg.id),
                     "role": msg.role,
                     "content": msg.content,
-                    "created_at": msg.created_at.isoformat()
+                    "created_at": msg.created_at.isoformat(),
                 }
                 for msg in messages
             ]
         finally:
-            db.close()
+            await db.close()
+
+    async def get_conversation_history(
+        self,
+        conversation_id: str,
+        user_id: str,
+        limit: int = 10,
+    ) -> List[Dict]:
+        parsed_conversation_id = self._parse_conversation_id(conversation_id)
+        if parsed_conversation_id is None:
+            return []
+
+        db = AsyncSessionLocal()
+        try:
+            result = await db.execute(
+                select(Message)
+                .join(Conversation, Conversation.id == Message.conversation_id)
+                .where(
+                    Message.conversation_id == parsed_conversation_id,
+                    Conversation.user_id == int(user_id),
+                )
+                .order_by(Message.created_at.desc())
+                .limit(limit)
+            )
+            messages = list(result.scalars().all())
+            messages.reverse()
+
+            return [
+                {
+                    "role": msg.role,
+                    "content": msg.content,
+                    "conversation_id": str(msg.conversation_id),
+                    "created_at": msg.created_at.isoformat(),
+                }
+                for msg in messages
+            ]
+        finally:
+            await db.close()
 
     async def get_user_conversations(self, user_id: str) -> List[Dict[str, Any]]:
-        """Get all conversations for a user with message counts"""
-        db = SessionLocal()
+        db = AsyncSessionLocal()
         try:
-            conversations = db.query(
-                Conversation,
-                func.count(Message.id).label("message_count")
-            ).outerjoin(
-                Message, Message.conversation_id == Conversation.id
-            ).filter(
-                Conversation.user_id == int(user_id)
-            ).group_by(
-                Conversation.id
-            ).order_by(
-                Conversation.updated_at.desc()
-            ).all()
+            result = await db.execute(
+                select(
+                    Conversation,
+                    func.count(Message.id).label("message_count"),
+                )
+                .outerjoin(Message, Message.conversation_id == Conversation.id)
+                .where(Conversation.user_id == int(user_id))
+                .group_by(Conversation.id)
+                .order_by(Conversation.updated_at.desc())
+            )
+            rows = result.all()
 
             return [
                 {
@@ -193,33 +214,37 @@ class ChatHistoryService:
                     "updated_at": conv.updated_at.isoformat(),
                     "message_count": count or 0,
                 }
-                for conv, count in conversations
+                for conv, count in rows
             ]
         finally:
-            db.close()
+            await db.close()
 
     async def delete_conversation(self, conversation_id: str, user_id: str) -> bool:
-        """Delete a conversation and all its messages"""
-        db = SessionLocal()
-        try:
-            parsed_conversation_id = self._parse_conversation_id(conversation_id)
-            if parsed_conversation_id is None:
-                raise ValueError("conversation_id must be a valid UUID")
+        parsed_conversation_id = self._parse_conversation_id(conversation_id)
+        if parsed_conversation_id is None:
+            raise ValueError("conversation_id must be a valid UUID")
 
-            conversation = db.query(Conversation).filter(
-                Conversation.id == parsed_conversation_id,
-                Conversation.user_id == int(user_id)
-            ).first()
+        db = AsyncSessionLocal()
+        try:
+            result = await db.execute(
+                select(Conversation).where(
+                    Conversation.id == parsed_conversation_id,
+                    Conversation.user_id == int(user_id),
+                )
+            )
+            conversation = result.scalar_one_or_none()
 
             if not conversation:
                 return False
 
-            db.query(Message).filter(Message.conversation_id == conversation.id).delete()
-            db.delete(conversation)
-            db.commit()
+            await db.execute(
+                delete(Message).where(Message.conversation_id == conversation.id)
+            )
+            await db.delete(conversation)
+            await db.commit()
             return True
         finally:
-            db.close()
+            await db.close()
 
     @lru_cache()
     def get_chat_history_service():
