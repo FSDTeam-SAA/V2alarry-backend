@@ -331,3 +331,16 @@ Qdrant finds top 5 similar chunks
 Chunks + message sent to OpenAI GPT
 LLM answers using retrieved context
 That's RAG: Retrieval-Augmented Generation — fetch relevant docs first, then generate.
+
+
+### Setup commands: 
+```
+sudo apt update
+sudo apt install -y python3 python3-venv python3-pip build-essential libpq-dev
+
+cd /path/to/V2alarry-backend
+python3 -m venv .venv
+source .venv/bin/activate
+pip install --upgrade pip setuptools wheel
+pip install -r requirements.txt
+```
