@@ -18,6 +18,8 @@ class Settings(BaseSettings):
     SECRET_KEY: str
     ALGORITHM: str
     ACCESS_TOKEN_EXPIRE_MINUTES: int
+    REFRESH_TOKEN_EXPIRE_DAYS: int = 30
+    GOOGLE_CLIENT_ID: str = ""
 
     # Vector DB
     VECTOR_DB_URL: str = "http://localhost:6333"

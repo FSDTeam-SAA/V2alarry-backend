@@ -7,6 +7,12 @@ class UserRepository:
     async def get_by_email(self, db: AsyncSession, email: str):
         result = await db.execute(select(User).where(User.email == email))
         return result.scalar_one_or_none()
+
+    async def get_by_google_subject(self, db: AsyncSession, google_subject: str):
+        result = await db.execute(
+            select(User).where(User.google_subject == google_subject)
+        )
+        return result.scalar_one_or_none()
     
     async def create(self, db: AsyncSession, user: User):
         db.add(user)
