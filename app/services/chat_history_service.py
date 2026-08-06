@@ -109,10 +109,13 @@ class ChatHistoryService:
 
             await db.commit()
             await db.refresh(user_msg)
+            await db.refresh(assistant_msg)
 
             return {
                 "id": str(user_msg.id),
                 "conversation_id": str(conv_uuid),
+                "user_message_id": str(user_msg.id),
+                "assistant_message_id": str(assistant_msg.id),
                 "role": user_msg.role,
                 "content": user_msg.content,
                 "created_at": user_msg.created_at.isoformat(),

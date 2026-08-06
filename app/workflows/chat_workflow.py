@@ -172,12 +172,6 @@ class WorkflowNodes:
         state["response"] = full_response
         state["metadata"]["response_length"] = len(full_response)
 
-        yield json.dumps({
-            "type": "done",
-            "conversation_id": state.get("conversation_id", ""),
-            "metadata": state.get("metadata", {}),
-        }) + "\n"
-
     async def save_conversation(self, state: Dict[str, Any]) -> Dict[str, Any]:
         user_id = state.get("user_id")
         message = state.get("message")
@@ -196,6 +190,8 @@ class WorkflowNodes:
         state["conversation_id"] = result["conversation_id"]
         state["metadata"]["saved"] = True
         state["metadata"]["message_id"] = result["id"]
+        state["metadata"]["user_message_id"] = result["user_message_id"]
+        state["metadata"]["assistant_message_id"] = result["assistant_message_id"]
 
         await self._invalidate_history_cache(user_id, conversation_id)
 
@@ -315,6 +311,15 @@ class ChatWorkflow:
             yield event
 
         state = await nodes.save_conversation(state)
+        yield json.dumps(
+            {
+                "type": "done",
+                "conversation_id": state["conversation_id"],
+                "user_message_id": state["metadata"]["user_message_id"],
+                "assistant_message_id": state["metadata"]["assistant_message_id"],
+                "persisted": True,
+            }
+        )
 
 
 _workflow_instance: Optional[ChatWorkflow] = None
