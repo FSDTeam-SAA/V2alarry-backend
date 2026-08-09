@@ -1,17 +1,37 @@
-from sentence_transformers import SentenceTransformer
-from typing import List
 import asyncio
+import logging
+from typing import List
+
+from sentence_transformers import SentenceTransformer
+
 from app.core.config import settings
 from app.core.cache import cache_get, cache_set, make_cache_key
 
 _model: SentenceTransformer = None
+logger = logging.getLogger(__name__)
 
 
 def _get_model() -> SentenceTransformer:
     global _model
     if _model is None:
-        _model = SentenceTransformer(settings.EMBEDDING_MODEL)
+        try:
+            _model = SentenceTransformer(
+                settings.EMBEDDING_MODEL,
+                local_files_only=True,
+            )
+        except Exception as exc:
+            raise RuntimeError(
+                f"Embedding model '{settings.EMBEDDING_MODEL}' is not available in the local cache. "
+                "Preload it before starting the backend."
+            ) from exc
     return _model
+
+
+def preload_embedding_model() -> SentenceTransformer:
+    """Load the required model before the application begins serving requests."""
+    model = _get_model()
+    logger.info("Embedding model '%s' loaded from the local cache", settings.EMBEDDING_MODEL)
+    return model
 
 
 class EmbeddingService:

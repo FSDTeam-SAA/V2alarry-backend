@@ -14,6 +14,13 @@ uv run uvicorn app.main:app --reload
 ### Api docs:
 http://127.0.0.1:8000/docs
 
+### Embedding model requirement
+
+Chat runs with `all-MiniLM-L6-v2` in offline-only mode. Preload the model in
+the deployed image or runtime cache before starting the backend; the server
+will fail startup if it is unavailable rather than downloading it during a
+chat request.
+
 
 # Docker & Qdrant Quick Guide
 

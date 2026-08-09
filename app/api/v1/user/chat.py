@@ -1,15 +1,19 @@
+import json
+import logging
+import uuid
+from typing import List, Optional
+
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
-from typing import Optional, List
-from app.services.chat_history_service import ChatHistoryService
-from app.workflows.chat_workflow import ChatWorkflow, get_chat_workflow
+from pydantic import BaseModel, field_validator
+
 from app.api.dependencies.auth import get_current_user
 from app.models.user import User
-from pydantic import BaseModel, field_validator
-import uuid
-import json
+from app.services.chat_history_service import ChatHistoryService
+from app.workflows.chat_workflow import ChatWorkflow, get_chat_workflow
 
 router = APIRouter(prefix="/chat", tags=["User Chat"])
+logger = logging.getLogger(__name__)
 
 
 class ChatRequest(BaseModel):
@@ -105,8 +109,17 @@ async def _stream_response(
         ):
             yield f"data: {event}\n\n"
         yield "data: [DONE]\n\n"
-    except Exception as e:
-        yield f"data: {json.dumps({'type': 'error', 'content': str(e)})}\n\n"
+    except Exception:
+        logger.exception(
+            "Chat stream failed while streaming a response for user %s in conversation %s",
+            current_user.id,
+            request.conversation_id or "new",
+        )
+        yield (
+            "data: "
+            f"{json.dumps({'type': 'error', 'content': 'The chat service is temporarily unavailable. Please try again.'})}"
+            "\n\n"
+        )
         yield "data: [DONE]\n\n"
 
 

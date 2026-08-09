@@ -6,6 +6,7 @@ from app.api.v1.auth import router as auth_router
 from app.api.v1.users import router as users_router
 from app.core.config import settings
 from app.db.database import ensure_schema_compatibility
+from app.services.embedding_service import preload_embedding_model
 
 app = FastAPI(
     title="V2alarry Backend",
@@ -31,6 +32,7 @@ app.include_router(chat_router, prefix="/api/v1", tags=["User"])
 
 @app.on_event("startup")
 async def startup_event():
+    preload_embedding_model()
     ensure_schema_compatibility()
 
 @app.get("/")

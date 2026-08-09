@@ -304,9 +304,13 @@ class ChatWorkflow:
 
         nodes = self.nodes
 
+        yield json.dumps({"type": "status", "status": "accepted"})
+        yield json.dumps({"type": "status", "status": "retrieving_context"})
         state = await nodes.retrieve_data(initial_state)
+        yield json.dumps({"type": "status", "status": "building_context"})
         state = await nodes.generate_context(state)
 
+        yield json.dumps({"type": "status", "status": "generating_response"})
         async for event in nodes.generate_response_stream(state):
             yield event
 
