@@ -6,7 +6,6 @@ from app.services.chat_history_service import ChatHistoryService
 from app.core.llm import LLMService
 from app.core.config import settings
 from app.core.cache import cache_get, cache_set, make_cache_key
-import asyncio
 import json
 
 
@@ -15,6 +14,7 @@ class ChatState(TypedDict):
     message: str
     conversation_id: Optional[str]
     user_history: List[Dict]
+    rewritten_query: str
     retrieved_docs: List[Dict]
     context: str
     response: str
@@ -50,25 +50,19 @@ class WorkflowNodes:
         self.llm_service = LLMService()
 
     async def retrieve_data(self, state: Dict[str, Any]) -> Dict[str, Any]:
-        """Parallel retrieval of history and documents."""
+        """Retrieve history, resolve follow-up intent, and search knowledge sources."""
         user_id = state.get("user_id")
         message = state.get("message")
         conversation_id = state.get("conversation_id")
 
-        history_task = asyncio.create_task(
-            self._fetch_history(user_id, conversation_id)
-        )
-        docs_task = asyncio.create_task(
-            self._fetch_documents(message)
-        )
-
-        user_history, retrieved_docs = await asyncio.gather(
-            history_task, docs_task
-        )
-
+        user_history = await self._fetch_history(user_id, conversation_id)
         state["user_history"] = user_history
-        state["retrieved_docs"] = retrieved_docs
         state["metadata"]["history_retrieved"] = len(user_history)
+
+        state = await self.query_rewriting(state)
+        retrieved_docs = await self._fetch_documents(state["rewritten_query"])
+
+        state["retrieved_docs"] = retrieved_docs
         state["metadata"]["docs_retrieved"] = len(retrieved_docs)
 
         return state
@@ -111,30 +105,22 @@ class WorkflowNodes:
                     "content": result["payload"].get("content", ""),
                     "score": score,
                     "document_id": result["payload"].get("document_id", ""),
+                    "filename": result["payload"].get("filename", "knowledge base"),
                     "similarity": score,
                 })
 
         return retrieved_docs
 
     async def generate_context(self, state: Dict[str, Any]) -> Dict[str, Any]:
-        user_history = state.get("user_history", [])
         retrieved_docs = state.get("retrieved_docs", [])
 
-        doc_context = ""
-        if retrieved_docs:
-            doc_context = "Relevant information from knowledge base:\n\n"
-            for i, doc in enumerate(retrieved_docs[: settings.CONTEXT_DOC_COUNT], 1):
-                doc_context += f"[Source {i}] (relevance: {doc['score']:.2f}) {doc['content']}\n\n"
+        source_blocks = []
+        for i, doc in enumerate(retrieved_docs[: settings.CONTEXT_DOC_COUNT], 1):
+            source_blocks.append(
+                f"[Source {i}: {doc['filename']}]\n{doc['content']}"
+            )
 
-        history_context = ""
-        if user_history:
-            history_context = "Previous conversation:\n\n"
-            for msg in user_history[-settings.HISTORY_LIMIT:]:
-                role = "User" if msg.get("role") == "user" else "Assistant"
-                history_context += f"{role}: {msg.get('content')}\n"
-            history_context += "\n"
-
-        full_context = f"{history_context}{doc_context}"
+        full_context = "\n\n".join(source_blocks)
 
         state["context"] = full_context
         state["metadata"]["context_length"] = len(full_context)
@@ -145,13 +131,11 @@ class WorkflowNodes:
         message = state.get("message")
         context = state.get("context", "")
 
-        formatted_prompt = SYSTEM_PROMPT + "\n\nContext:\n" + (
-            context if context else "No specific context provided."
-        )
-
         response = await self.llm_service.generate(
-            system_prompt=formatted_prompt,
+            system_prompt=LEADERSHIP_COACH_SYSTEM_PROMPT,
             user_message=message,
+            history=state.get("user_history", []),
+            knowledge_context=context or None,
         )
 
         state["response"] = response
@@ -165,14 +149,12 @@ class WorkflowNodes:
         message = state.get("message")
         context = state.get("context", "")
 
-        formatted_prompt = SYSTEM_PROMPT + "\n\nContext:\n" + (
-            context if context else "No specific context provided."
-        )
-
         full_response = ""
         async for token in self.llm_service.generate_stream(
-            system_prompt=formatted_prompt,
+            system_prompt=LEADERSHIP_COACH_SYSTEM_PROMPT,
             user_message=message,
+            history=state.get("user_history", []),
+            knowledge_context=context or None,
         ):
             full_response += token
             yield json.dumps({"type": "token", "content": token}) + "\n"
@@ -238,8 +220,8 @@ Output ONLY the rewritten query text, nothing else."""
             user_message=rewrite_prompt,
         )
 
-        state["rewritten_query"] = rewritten.strip()
-        state["metadata"]["query_rewritten"] = True
+        state["rewritten_query"] = rewritten.strip() or message
+        state["metadata"]["query_rewritten"] = state["rewritten_query"] != message
 
         return state
 
@@ -285,6 +267,7 @@ class ChatWorkflow:
             message=message,
             conversation_id=conversation_id,
             user_history=[],
+            rewritten_query=message,
             retrieved_docs=[],
             context="",
             response="",
@@ -304,6 +287,7 @@ class ChatWorkflow:
             message=message,
             conversation_id=conversation_id,
             user_history=[],
+            rewritten_query=message,
             retrieved_docs=[],
             context="",
             response="",
