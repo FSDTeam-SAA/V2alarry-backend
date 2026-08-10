@@ -21,6 +21,14 @@ class ChatRequest(BaseModel):
     conversation_id: Optional[str] = None
     stream: bool = False
 
+    @field_validator("message")
+    @classmethod
+    def validate_message(cls, value: str) -> str:
+        message = value.strip()
+        if not message:
+            raise ValueError("message must not be blank")
+        return message
+
     @field_validator("conversation_id", mode="before")
     @classmethod
     def validate_conversation_id(cls, value: Optional[str]) -> Optional[str]:
