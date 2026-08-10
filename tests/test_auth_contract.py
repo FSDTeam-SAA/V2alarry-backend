@@ -135,13 +135,14 @@ class AuthenticationContractTests(unittest.IsolatedAsyncioTestCase):
             google_subject="google-subject",
         )
         identity = Mock(subject="google-subject", email="person@example.com")
+        run_in_threadpool = AsyncMock(return_value=identity)
 
         with (
             patch.object(auth.settings, "GOOGLE_CLIENT_ID", "google-client"),
             patch.object(
-                auth.google_auth_service,
-                "verify_id_token",
-                return_value=identity,
+                auth,
+                "run_in_threadpool",
+                new=run_in_threadpool,
             ),
             patch.object(
                 auth.user_repo,
@@ -171,6 +172,11 @@ class AuthenticationContractTests(unittest.IsolatedAsyncioTestCase):
                 Mock(),
             )
 
+        run_in_threadpool.assert_awaited_once_with(
+            auth.google_auth_service.verify_id_token,
+            "google-id-token",
+            "google-client",
+        )
         self.assertEqual(response["user"]["email"], "person@example.com")
 
     def test_google_identity_rejects_an_unverified_email(self):
