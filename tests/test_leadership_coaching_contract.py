@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import AsyncMock, patch
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from pydantic import ValidationError
@@ -110,6 +111,22 @@ class _FakeResponseLLMService:
 
 
 class LeadershipRetrievalContractTests(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        self.cache_get = patch(
+            "app.workflows.chat_workflow.cache_get",
+            new=AsyncMock(return_value=None),
+        )
+        self.cache_set = patch(
+            "app.workflows.chat_workflow.cache_set",
+            new=AsyncMock(),
+        )
+        self.cache_get.start()
+        self.cache_set.start()
+
+    async def asyncTearDown(self):
+        self.cache_set.stop()
+        self.cache_get.stop()
+
     def make_nodes(self, history, rewritten_query="standalone follow-up query"):
         nodes = WorkflowNodes.__new__(WorkflowNodes)
         nodes.chat_history_service = _FakeHistoryService(history)
