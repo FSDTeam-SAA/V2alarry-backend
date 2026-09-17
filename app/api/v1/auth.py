@@ -7,6 +7,7 @@ from fastapi.concurrency import run_in_threadpool
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.core.agreements import CURRENT_AGREEMENT_VERSION
 from app.db.session import get_db
 from app.models.refresh_token import RefreshToken
 from app.schemas.user import (
@@ -18,6 +19,7 @@ from app.schemas.user import (
     UserResponse,
 )
 from app.repositories.refresh_token_repository import RefreshTokenRepository
+from app.repositories.agreement_repository import AgreementRepository
 from app.repositories.user_repository import UserRepository
 from app.services.auth_service import AuthService
 from app.services.google_auth_service import GoogleAuthService, GoogleIdentityError
@@ -27,6 +29,7 @@ router = APIRouter()
 user_repo = UserRepository()
 auth_service = AuthService()
 refresh_token_repo = RefreshTokenRepository()
+agreement_repo = AgreementRepository()
 google_auth_service = GoogleAuthService()
 
 
@@ -35,6 +38,11 @@ def _token_hash(token: str) -> str:
 
 
 async def _issue_tokens(db: AsyncSession, user) -> TokenResponse:
+    acceptance = await agreement_repo.get_acceptance(
+        db,
+        user_id=user.id,
+        agreement_version=CURRENT_AGREEMENT_VERSION,
+    )
     refresh_token = secrets.token_urlsafe(48)
     await refresh_token_repo.create(
         db,
@@ -53,7 +61,10 @@ async def _issue_tokens(db: AsyncSession, user) -> TokenResponse:
             "id": user.id,
             "email": user.email,
             "full_name": user.full_name,
-            "role": user.role,
+            "role": "user" if user.role == "candidate" else user.role,
+            "accepted_agreement_version": (
+                acceptance.agreement_version if acceptance else None
+            ),
         },
     )
 
@@ -66,9 +77,28 @@ async def register(user_data: UserCreate, db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=400, detail="User already exists")
 
     user = auth_service.register_user(user_data)
-    created_user = await user_repo.create(db, user)
+    created_user = await user_repo.create(db, user, commit=False)
+    acceptance = await agreement_repo.accept(
+        db,
+        user_id=created_user.id,
+        agreement_version=CURRENT_AGREEMENT_VERSION,
+        source="credentials",
+        commit=False,
+    )
+    await db.commit()
+    await db.refresh(created_user)
+    await db.refresh(acceptance)
 
-    return created_user
+    return {
+        "id": created_user.id,
+        "email": created_user.email,
+        "full_name": created_user.full_name,
+        "role": created_user.role,
+        "is_active": created_user.is_active,
+        "auth_provider": "credentials",
+        "password_login_enabled": created_user.password_login_enabled,
+        "accepted_agreement_version": acceptance.agreement_version,
+    }
 
 
 @router.post("/login", response_model=TokenResponse)

@@ -15,7 +15,7 @@ class AuthenticationContractTests(unittest.IsolatedAsyncioTestCase):
             id=7,
             email="person@example.com",
             full_name="Test Person",
-            role="candidate",
+            role="user",
             is_active=True,
             hashed_password="hashed",
         )
@@ -35,7 +35,7 @@ class AuthenticationContractTests(unittest.IsolatedAsyncioTestCase):
                             "id": 7,
                             "email": "person@example.com",
                             "full_name": "Test Person",
-                            "role": "candidate",
+                            "role": "user",
                         },
                     }
                 ),
@@ -56,7 +56,7 @@ class AuthenticationContractTests(unittest.IsolatedAsyncioTestCase):
             id=7,
             email="person@example.com",
             full_name="Test Person",
-            role="candidate",
+            role="user",
             is_active=True,
             hashed_password="hashed",
         )
@@ -67,7 +67,14 @@ class AuthenticationContractTests(unittest.IsolatedAsyncioTestCase):
             persisted_token = token
             return token
 
-        with patch.object(auth.refresh_token_repo, "create", new=capture_token):
+        with (
+            patch.object(auth.refresh_token_repo, "create", new=capture_token),
+            patch.object(
+                auth.agreement_repo,
+                "get_acceptance",
+                new=AsyncMock(return_value=None),
+            ),
+        ):
             response = await auth._issue_tokens(Mock(), user)
 
         self.assertTrue(response.access_token)
@@ -80,7 +87,7 @@ class AuthenticationContractTests(unittest.IsolatedAsyncioTestCase):
             id=7,
             email="person@example.com",
             full_name="Test Person",
-            role="candidate",
+            role="user",
             is_active=True,
             hashed_password="hashed",
         )
@@ -110,7 +117,7 @@ class AuthenticationContractTests(unittest.IsolatedAsyncioTestCase):
                             "id": 7,
                             "email": "person@example.com",
                             "full_name": "Test Person",
-                            "role": "candidate",
+                            "role": "user",
                         },
                     }
                 ),
@@ -129,7 +136,7 @@ class AuthenticationContractTests(unittest.IsolatedAsyncioTestCase):
             id=7,
             email="person@example.com",
             full_name="Test Person",
-            role="candidate",
+            role="user",
             is_active=True,
             hashed_password="hashed",
             google_subject="google-subject",
@@ -161,7 +168,7 @@ class AuthenticationContractTests(unittest.IsolatedAsyncioTestCase):
                             "id": 7,
                             "email": "person@example.com",
                             "full_name": "Test Person",
-                            "role": "candidate",
+                            "role": "user",
                         },
                     }
                 ),

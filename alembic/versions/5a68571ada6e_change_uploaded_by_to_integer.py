@@ -19,12 +19,37 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.execute("DELETE FROM document_chunks")
-    op.execute("DELETE FROM documents")
-    op.execute("ALTER TABLE documents DROP COLUMN uploaded_by")
-    op.execute("ALTER TABLE documents ADD COLUMN uploaded_by INTEGER NOT NULL REFERENCES users(id)")
+    op.execute(
+        """
+        DO $$
+        BEGIN
+            IF EXISTS (SELECT 1 FROM documents LIMIT 1) THEN
+                RAISE EXCEPTION
+                    'Cannot infer integer users from legacy UUID document owners. '
+                    'No rows were changed; perform an operator-reviewed mapping.';
+            END IF;
+
+            ALTER TABLE documents DROP COLUMN uploaded_by;
+            ALTER TABLE documents
+                ADD COLUMN uploaded_by INTEGER NOT NULL REFERENCES users(id);
+        END $$;
+        """
+    )
 
 
 def downgrade() -> None:
-    op.execute("ALTER TABLE documents DROP COLUMN uploaded_by")
-    op.execute("ALTER TABLE documents ADD COLUMN uploaded_by UUID NOT NULL")
+    op.execute(
+        """
+        DO $$
+        BEGIN
+            IF EXISTS (SELECT 1 FROM documents LIMIT 1) THEN
+                RAISE EXCEPTION
+                    'Downgrade cannot infer UUID owners from integer user IDs. '
+                    'No rows were changed.';
+            END IF;
+
+            ALTER TABLE documents DROP COLUMN uploaded_by;
+            ALTER TABLE documents ADD COLUMN uploaded_by UUID NOT NULL;
+        END $$;
+        """
+    )

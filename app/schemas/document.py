@@ -13,12 +13,22 @@ class DocumentResponse(DocumentBase):
     chunk_count: int
     uploaded_at: datetime
     is_active: bool
+    category: str
+    file_size_bytes: int
+    is_global: bool
+    target_user_id: int | None = None
+    target_user_email: str | None = None
 
 class DocumentUploadResponse(BaseModel):
     document_id: str
     chunks: int
     status: str
     message: str
+    is_global: bool
+    target_user_id: int | None = None
+    target_user_email: str | None = None
+    category: str
+    file_size_bytes: int
 
 class DocumentListResponse(BaseModel):
     documents: List[DocumentResponse]

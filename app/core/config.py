@@ -14,6 +14,7 @@ class Settings(BaseSettings):
         "http://127.0.0.1:5500",
     ]
     DATABASE_URL: str
+    SQL_ECHO: bool = False
 
     SECRET_KEY: str
     ALGORITHM: str

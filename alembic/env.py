@@ -2,6 +2,7 @@ from logging.config import fileConfig
 
 from sqlalchemy import engine_from_config
 from sqlalchemy import pool
+from sqlalchemy.engine import make_url
 
 from app.core.config import settings
 
@@ -11,10 +12,8 @@ from alembic import context
 # access to the values within the .ini file in use.
 config = context.config
 
-config.set_main_option(
-    "sqlalchemy.url",
-    settings.DATABASE_URL.replace("+asyncpg", "+psycopg2").replace("+psycopg", "+psycopg2")
-)
+sync_database_url = make_url(settings.DATABASE_URL).set(drivername="postgresql+psycopg2")
+config.set_main_option("sqlalchemy.url", sync_database_url.render_as_string(hide_password=False))
 
 # Interpret the config file for Python logging.
 # This line sets up loggers basically.
@@ -49,7 +48,7 @@ def run_migrations_offline() -> None:
     script output.
 
     """
-    url = config.get_main_option("sqlalchemy.url", settings.DATABASE_URL.replace("+asyncpg", ""))
+    url = config.get_main_option("sqlalchemy.url")
     context.configure(
         url=url,
         target_metadata=target_metadata,

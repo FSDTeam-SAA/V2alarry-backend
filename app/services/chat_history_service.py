@@ -1,8 +1,11 @@
-from sqlalchemy import select, func, delete
+from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.database import AsyncSessionLocal
 from app.models.conversation import Conversation
 from app.models.message import Message
+from app.models.coaching_summary import CoachingSummary
+from app.models.coaching_working_state import CoachingWorkingState
+from app.schemas.coaching import CoachingSummaryData
 from typing import List, Dict, Any, Optional
 import uuid
 from functools import lru_cache
@@ -46,6 +49,7 @@ class ChatHistoryService:
                         "title": conv.title,
                         "created_at": conv.created_at.isoformat(),
                     }
+                raise ValueError("Conversation not found")
 
             conv = Conversation(
                 user_id=int(user_id),
@@ -70,11 +74,33 @@ class ChatHistoryService:
         user_message: str,
         assistant_response: str,
         metadata: Optional[Dict] = None,
+        working_state: Optional[Dict[str, Any]] = None,
+        source_turn_count: int = 0,
     ) -> Dict[str, Any]:
         db = AsyncSessionLocal()
         try:
-            conv = await self.get_or_create_conversation(user_id, conversation_id)
-            conv_uuid = uuid.UUID(conv["id"])
+            parsed_conversation_id = self._parse_conversation_id(conversation_id)
+            conv_obj = None
+            if parsed_conversation_id:
+                result = await db.execute(
+                    select(Conversation).where(
+                        Conversation.id == parsed_conversation_id,
+                        Conversation.user_id == int(user_id),
+                    )
+                )
+                conv_obj = result.scalar_one_or_none()
+                if not conv_obj:
+                    raise ValueError("Conversation not found")
+            else:
+                conv_obj = Conversation(
+                    user_id=int(user_id),
+                    title="New Conversation",
+                )
+                db.add(conv_obj)
+                await db.flush()
+
+            conv_uuid = conv_obj.id
+            conv_obj.updated_at = func.now()
 
             user_msg = Message(
                 conversation_id=conv_uuid,
@@ -95,17 +121,31 @@ class ChatHistoryService:
             )
             db.add(assistant_msg)
 
-            if conv["title"] == "New Conversation":
-                result = await db.execute(
-                    select(Conversation).where(Conversation.id == conv_uuid)
+            if conv_obj.title == "New Conversation":
+                from app.core.config import settings
+                title = user_message[:settings.TITLE_TRUNCATE_LENGTH] + (
+                    "..." if len(user_message) > settings.TITLE_TRUNCATE_LENGTH else ""
                 )
-                conv_obj = result.scalar_one_or_none()
-                if conv_obj:
-                    from app.core.config import settings
-                    title = user_message[:settings.TITLE_TRUNCATE_LENGTH] + (
-                        "..." if len(user_message) > settings.TITLE_TRUNCATE_LENGTH else ""
+                conv_obj.title = title
+
+            if working_state is not None:
+                state_result = await db.execute(
+                    select(CoachingWorkingState).where(
+                        CoachingWorkingState.conversation_id == conv_uuid
                     )
-                    conv_obj.title = title
+                )
+                state_record = state_result.scalar_one_or_none()
+                if state_record:
+                    state_record.state = working_state
+                    state_record.source_turn_count = source_turn_count
+                else:
+                    db.add(
+                        CoachingWorkingState(
+                            conversation_id=conv_uuid,
+                            state=working_state,
+                            source_turn_count=source_turn_count,
+                        )
+                    )
 
             await db.commit()
             await db.refresh(user_msg)
@@ -122,6 +162,134 @@ class ChatHistoryService:
             }
         finally:
             await db.close()
+
+    async def get_working_state(
+        self,
+        *,
+        conversation_id: str,
+        user_id: str,
+    ) -> CoachingWorkingState | None:
+        parsed_conversation_id = self._parse_conversation_id(conversation_id)
+        if parsed_conversation_id is None:
+            return None
+
+        async with AsyncSessionLocal() as db:
+            result = await db.execute(
+                select(CoachingWorkingState)
+                .join(
+                    Conversation,
+                    Conversation.id == CoachingWorkingState.conversation_id,
+                )
+                .where(
+                    CoachingWorkingState.conversation_id == parsed_conversation_id,
+                    Conversation.user_id == int(user_id),
+                )
+            )
+            return result.scalar_one_or_none()
+
+    async def get_latest_valid_summaries(
+        self,
+        *,
+        user_id: str,
+        limit: int = 3,
+    ) -> List[CoachingSummary]:
+        async with AsyncSessionLocal() as db:
+            result = await db.execute(
+                select(CoachingSummary)
+                .where(
+                    CoachingSummary.user_id == int(user_id),
+                    CoachingSummary.generation_status == "current",
+                )
+                .order_by(CoachingSummary.updated_at.desc())
+                .limit(limit)
+            )
+            return list(result.scalars().all())
+
+    async def get_summary(
+        self,
+        *,
+        conversation_id: str,
+        user_id: str,
+    ) -> CoachingSummary | None:
+        parsed_conversation_id = self._parse_conversation_id(conversation_id)
+        if parsed_conversation_id is None:
+            return None
+        async with AsyncSessionLocal() as db:
+            result = await db.execute(
+                select(CoachingSummary).where(
+                    CoachingSummary.conversation_id == parsed_conversation_id,
+                    CoachingSummary.user_id == int(user_id),
+                )
+            )
+            return result.scalar_one_or_none()
+
+    async def save_summary(
+        self,
+        *,
+        conversation_id: str,
+        user_id: str,
+        summary: CoachingSummaryData,
+        source_turn_count: int,
+    ) -> None:
+        parsed_conversation_id = self._parse_conversation_id(conversation_id)
+        if parsed_conversation_id is None:
+            raise ValueError("conversation_id must be a valid UUID")
+        async with AsyncSessionLocal() as db:
+            result = await db.execute(
+                select(CoachingSummary).where(
+                    CoachingSummary.conversation_id == parsed_conversation_id,
+                    CoachingSummary.user_id == int(user_id),
+                )
+            )
+            record = result.scalar_one_or_none()
+            values = summary.model_dump()
+            if record:
+                for field, value in values.items():
+                    setattr(record, field, value)
+                record.source_turn_count = source_turn_count
+                record.generation_status = "current"
+            else:
+                db.add(
+                    CoachingSummary(
+                        conversation_id=parsed_conversation_id,
+                        user_id=int(user_id),
+                        source_turn_count=source_turn_count,
+                        generation_status="current",
+                        **values,
+                    )
+                )
+            await db.commit()
+
+    async def mark_summary_stale(
+        self,
+        *,
+        conversation_id: str,
+        user_id: str,
+        source_turn_count: int = 0,
+    ) -> None:
+        parsed_conversation_id = self._parse_conversation_id(conversation_id)
+        if parsed_conversation_id is None:
+            return
+        async with AsyncSessionLocal() as db:
+            result = await db.execute(
+                select(CoachingSummary).where(
+                    CoachingSummary.conversation_id == parsed_conversation_id,
+                    CoachingSummary.user_id == int(user_id),
+                )
+            )
+            record = result.scalar_one_or_none()
+            if record:
+                record.generation_status = "stale"
+            else:
+                db.add(
+                    CoachingSummary(
+                        conversation_id=parsed_conversation_id,
+                        user_id=int(user_id),
+                        source_turn_count=source_turn_count,
+                        generation_status="stale",
+                    )
+                )
+            await db.commit()
 
     async def get_conversation_messages(
         self,
@@ -240,9 +408,6 @@ class ChatHistoryService:
             if not conversation:
                 return False
 
-            await db.execute(
-                delete(Message).where(Message.conversation_id == conversation.id)
-            )
             await db.delete(conversation)
             await db.commit()
             return True

@@ -16,7 +16,7 @@ if database_url.query.get("sslmode") in {"require", "verify-ca", "verify-full"}:
 
 engine = create_async_engine(
     async_database_url,
-    echo=True,
+    echo=settings.SQL_ECHO,
     future=True,
     connect_args=async_connect_args,
 )
@@ -29,7 +29,7 @@ AsyncSessionLocal = async_sessionmaker(
 
 sync_engine = create_engine(
     sync_database_url,
-    echo=True,
+    echo=settings.SQL_ECHO,
     future=True,
 )
 
@@ -41,11 +41,8 @@ SessionLocal = sessionmaker(
 
 
 def ensure_schema_compatibility() -> None:
-    """
-    Repair legacy schemas that still use UUID foreign keys for integer-backed users.
-    This keeps older environments working even if Alembic migrations were skipped.
-    """
-    with sync_engine.begin() as connection:
+    """Fail closed when a legacy schema needs an operator-managed migration."""
+    with sync_engine.connect() as connection:
         current_type = connection.execute(
             text(
                 """
@@ -58,42 +55,11 @@ def ensure_schema_compatibility() -> None:
             )
         ).scalar_one_or_none()
 
-        if current_type != "uuid":
+        if current_type in {None, "integer"}:
             return
 
-        constraint_name = connection.execute(
-            text(
-                """
-                SELECT tc.constraint_name
-                FROM information_schema.table_constraints AS tc
-                JOIN information_schema.key_column_usage AS kcu
-                  ON tc.constraint_name = kcu.constraint_name
-                 AND tc.table_schema = kcu.table_schema
-                WHERE tc.table_schema = 'public'
-                  AND tc.table_name = 'conversations'
-                  AND tc.constraint_type = 'FOREIGN KEY'
-                  AND kcu.column_name = 'user_id'
-                LIMIT 1
-                """
-            )
-        ).scalar_one_or_none()
-
-        # Legacy rows can't be mapped to integer user IDs, so clear chat history
-        # before rebuilding the foreign key column with the current schema type.
-        connection.execute(text("DELETE FROM messages"))
-        connection.execute(text("DELETE FROM conversations"))
-
-        if constraint_name:
-            connection.execute(
-                text(f'ALTER TABLE public.conversations DROP CONSTRAINT "{constraint_name}"')
-            )
-
-        connection.execute(text("ALTER TABLE public.conversations DROP COLUMN user_id"))
-        connection.execute(
-            text(
-                """
-                ALTER TABLE public.conversations
-                ADD COLUMN user_id INTEGER NOT NULL REFERENCES public.users(id)
-                """
-            )
+        raise RuntimeError(
+            "Unsupported conversations.user_id schema type "
+            f"{current_type!r}. Back up the database and run the reviewed "
+            "operator-managed migration; startup will not modify existing rows."
         )

@@ -96,6 +96,16 @@ class _FakeVectorStore:
         ]
 
 
+class _UnavailableVectorStore:
+    async def search(self, *_args, **_kwargs):
+        raise ConnectionError("Qdrant is unavailable")
+
+
+class _FakeDocumentService:
+    async def get_accessible_document_ids(self, _user_id):
+        return ["document-1"]
+
+
 class _FakeResponseLLMService:
     def __init__(self):
         self.generate_calls = []
@@ -175,6 +185,19 @@ class LeadershipRetrievalContractTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(nodes.llm_service.calls, [])
         self.assertEqual(nodes.embedding_service.messages, ["How should I say that?"])
         self.assertFalse(result["metadata"]["query_rewritten"])
+
+    async def test_vector_store_outage_returns_no_knowledge_context(self):
+        nodes = WorkflowNodes.__new__(WorkflowNodes)
+        nodes.embedding_service = _FakeEmbeddingService()
+        nodes.document_service = _FakeDocumentService()
+        nodes.vector_store = _UnavailableVectorStore()
+
+        documents = await nodes._fetch_documents(
+            "How should I prepare for feedback?",
+            user_id=1,
+        )
+
+        self.assertEqual(documents, [])
 
     async def test_context_contains_named_sources_but_not_history(self):
         nodes = WorkflowNodes.__new__(WorkflowNodes)

@@ -1,25 +1,29 @@
-from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, Query
+from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException, Query
 from typing import List, Optional
 from app.services.document_service import DocumentService
-from app.api.dependencies.auth import get_current_user
+from app.api.dependencies.auth import require_admin
 from app.models.user import User
+from app.db.session import get_db
+from app.repositories.user_repository import UserRepository
+from sqlalchemy.ext.asyncio import AsyncSession
+import logging
 from app.schemas.document import DocumentResponse, DocumentUploadResponse, DocumentListResponse
 import uuid
 
 router = APIRouter(prefix="/admin/documents", tags=["Admin Documents"])
-
-async def get_current_admin(current_user: User = Depends(get_current_user)):
-    """Check if user is admin"""
-    if current_user.role != "admin":
-        raise HTTPException(status_code=403, detail="Admin access required")
-    return current_user
+user_repo = UserRepository()
+logger = logging.getLogger(__name__)
 
 @router.post("/upload", response_model=DocumentUploadResponse)
 async def upload_document(
     file: UploadFile = File(...),
-    title: Optional[str] = None,
-    current_user: User = Depends(get_current_admin),
-    document_service: DocumentService = Depends()
+    title: Optional[str] = Form(default=None, max_length=255),
+    category: str = Form(default="general", min_length=1, max_length=100),
+    is_global: bool = Form(default=True),
+    target_user_email: Optional[str] = Form(default=None),
+    current_user: User = Depends(require_admin),
+    document_service: DocumentService = Depends(),
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Upload a document to the knowledge base
@@ -28,7 +32,10 @@ async def upload_document(
     """
     # Validate file type
     allowed_types = ["pdf", "docx", "txt", "md"]
-    file_type = file.filename.split('.')[-1].lower()
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="A filename is required")
+    safe_filename = file.filename.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
+    file_type = safe_filename.split('.')[-1].lower()
     
     if file_type not in allowed_types:
         raise HTTPException(
@@ -40,25 +47,47 @@ async def upload_document(
     file_content = await file.read()
     if len(file_content) > 10 * 1024 * 1024:
         raise HTTPException(status_code=400, detail="File size exceeds 10MB limit")
+
+    target_user = None
+    normalized_target_email = target_user_email.strip().lower() if target_user_email else None
+    if is_global and normalized_target_email:
+        raise HTTPException(
+            status_code=400,
+            detail="Global documents cannot target a specific user",
+        )
+    if not is_global:
+        if not normalized_target_email:
+            raise HTTPException(
+                status_code=400,
+                detail="A target user email is required for user-specific documents",
+            )
+        target_user = await user_repo.get_by_email(db, normalized_target_email)
+        if not target_user:
+            raise HTTPException(status_code=400, detail="Target user was not found")
     
     try:
         result = await document_service.process_document(
             file_content=file_content,
-            filename=file.filename,
+            filename=safe_filename,
             uploaded_by=str(current_user.id),
-            title=title
+            title=title,
+            category=category.strip(),
+            is_global=is_global,
+            target_user_id=target_user.id if target_user else None,
+            target_user_email=target_user.email if target_user else None,
         )
         return result
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error processing document: {str(e)}")
+    except Exception:
+        logger.warning("Document processing failed for admin user %s", current_user.id)
+        raise HTTPException(status_code=500, detail="Unable to process document")
 
 @router.get("/", response_model=List[DocumentResponse])
 async def get_documents(
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=100),
-    current_user: User = Depends(get_current_admin),
+    current_user: User = Depends(require_admin),
     document_service: DocumentService = Depends()
 ):
     """Get all uploaded documents"""
@@ -68,7 +97,7 @@ async def get_documents(
 @router.delete("/{document_id}")
 async def delete_document(
     document_id: str,
-    current_user: User = Depends(get_current_admin),
+    current_user: User = Depends(require_admin),
     document_service: DocumentService = Depends()
 ):
     """Delete a document and its vectors"""
@@ -77,12 +106,13 @@ async def delete_document(
         return result
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error deleting document: {str(e)}")
+    except Exception:
+        logger.warning("Document deletion failed for admin user %s", current_user.id)
+        raise HTTPException(status_code=500, detail="Unable to delete document")
 
 @router.get("/stats")
 async def get_document_stats(
-    current_user: User = Depends(get_current_admin),
+    current_user: User = Depends(require_admin),
     document_service: DocumentService = Depends()
 ):
     """Get document statistics"""

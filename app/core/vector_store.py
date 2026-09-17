@@ -67,11 +67,19 @@ class VectorStore:
         query_vector: List[float],
         limit: int = 5,
         filter_conditions: Optional[Dict] = None,
+        allowed_document_ids: Optional[List[str]] = None,
     ) -> List[Dict]:
-        cache_key = f"vec:{make_cache_key(str(query_vector))}:{limit}"
+        scope_identity = ",".join(sorted(allowed_document_ids or []))
+        filter_identity = str(sorted((filter_conditions or {}).items()))
+        cache_key = (
+            f"vec:{make_cache_key(str(query_vector), scope_identity, filter_identity)}:{limit}"
+        )
         cached = await cache_get(cache_key)
         if cached is not None:
             return cached
+
+        if allowed_document_ids is not None and not allowed_document_ids:
+            return []
 
         qdrant_filter = None
         if filter_conditions:
@@ -84,6 +92,16 @@ class VectorStore:
                     for key, value in filter_conditions.items()
                 ]
             )
+
+        if allowed_document_ids is not None:
+            document_condition = models.FieldCondition(
+                key="document_id",
+                match=models.MatchAny(any=allowed_document_ids),
+            )
+            if qdrant_filter:
+                qdrant_filter.must.append(document_condition)
+            else:
+                qdrant_filter = models.Filter(must=[document_condition])
 
         loop = asyncio.get_event_loop()
         results = await loop.run_in_executor(

@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.api.v1.admin import documents_router
+from app.api.v1.admin import dashboard_router, documents_router
 from app.api.v1.user import chat_router
 from app.api.v1.auth import router as auth_router
 from app.api.v1.users import router as users_router
@@ -27,6 +27,7 @@ app.add_middleware(
 app.include_router(auth_router, prefix="/api/v1/auth", tags=["Authentication"])
 app.include_router(users_router, prefix="/api/v1/users", tags=["Users"])
 app.include_router(documents_router, prefix="/api/v1", tags=["Admin"])
+app.include_router(dashboard_router, prefix="/api/v1", tags=["Admin"])
 app.include_router(chat_router, prefix="/api/v1", tags=["User"])
 
 

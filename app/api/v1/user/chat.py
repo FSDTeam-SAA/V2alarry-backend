@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, field_validator
 
-from app.api.dependencies.auth import get_current_user
+from app.api.dependencies.auth import require_current_agreement
 from app.models.user import User
 from app.services.chat_history_service import ChatHistoryService
 from app.workflows.chat_workflow import ChatWorkflow, get_chat_workflow
@@ -70,7 +70,7 @@ class MessageResponse(BaseModel):
 @router.post("/", response_model=ChatResponse)
 async def chat(
     request: ChatRequest,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_current_agreement),
 ):
     workflow = get_chat_workflow()
 
@@ -101,7 +101,11 @@ async def chat(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error processing message: {str(e)}")
+        logger.exception("Chat request failed for user %s: %s", current_user.id, e)
+        raise HTTPException(
+            status_code=500,
+            detail="The chat service is temporarily unavailable. Please try again.",
+        )
 
 
 async def _stream_response(
@@ -117,11 +121,12 @@ async def _stream_response(
         ):
             yield f"data: {event}\n\n"
         yield "data: [DONE]\n\n"
-    except Exception:
+    except Exception as e:
         logger.exception(
-            "Chat stream failed while streaming a response for user %s in conversation %s",
+            "Chat stream failed while streaming a response for user %s in conversation %s: %s",
             current_user.id,
             request.conversation_id or "new",
+            e,
         )
         yield (
             "data: "
@@ -133,7 +138,7 @@ async def _stream_response(
 
 @router.get("/conversations", response_model=List[ConversationResponse])
 async def get_conversations(
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_current_agreement),
     chat_history_service: ChatHistoryService = Depends(),
 ):
     try:
@@ -151,14 +156,15 @@ async def get_conversations(
             )
             for conv in conversations
         ]
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error fetching conversations: {str(e)}")
+    except Exception:
+        logger.warning("Conversation listing failed for user %s", current_user.id)
+        raise HTTPException(status_code=500, detail="Unable to fetch conversations")
 
 
 @router.get("/conversations/{conversation_id}/messages", response_model=List[MessageResponse])
 async def get_conversation_messages(
     conversation_id: str,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_current_agreement),
     chat_history_service: ChatHistoryService = Depends(),
 ):
     try:
@@ -169,14 +175,15 @@ async def get_conversation_messages(
         return messages
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error fetching messages: {str(e)}")
+    except Exception:
+        logger.warning("Message listing failed for user %s", current_user.id)
+        raise HTTPException(status_code=500, detail="Unable to fetch messages")
 
 
 @router.delete("/conversations/{conversation_id}")
 async def delete_conversation(
     conversation_id: str,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_current_agreement),
     chat_history_service: ChatHistoryService = Depends(),
 ):
     try:
@@ -191,5 +198,8 @@ async def delete_conversation(
         return {"message": "Conversation deleted successfully"}
     except ValueError:
         raise HTTPException(status_code=400, detail="conversation_id must be a valid UUID")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error deleting conversation: {str(e)}")
+    except HTTPException:
+        raise
+    except Exception:
+        logger.warning("Conversation deletion failed for user %s", current_user.id)
+        raise HTTPException(status_code=500, detail="Unable to delete conversation")

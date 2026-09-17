@@ -23,7 +23,6 @@ def upgrade() -> None:
         DO $$
         DECLARE
             current_type TEXT;
-            constraint_name TEXT;
         BEGIN
             SELECT data_type
             INTO current_type
@@ -33,31 +32,9 @@ def upgrade() -> None:
               AND table_schema = 'public';
 
             IF current_type = 'uuid' THEN
-                DELETE FROM messages;
-                DELETE FROM conversations;
-
-                SELECT tc.constraint_name
-                INTO constraint_name
-                FROM information_schema.table_constraints AS tc
-                JOIN information_schema.key_column_usage AS kcu
-                  ON tc.constraint_name = kcu.constraint_name
-                 AND tc.table_schema = kcu.table_schema
-                WHERE tc.table_name = 'conversations'
-                  AND tc.table_schema = 'public'
-                  AND tc.constraint_type = 'FOREIGN KEY'
-                  AND kcu.column_name = 'user_id'
-                LIMIT 1;
-
-                IF constraint_name IS NOT NULL THEN
-                    EXECUTE format(
-                        'ALTER TABLE public.conversations DROP CONSTRAINT %I',
-                        constraint_name
-                    );
-                END IF;
-
-                ALTER TABLE public.conversations DROP COLUMN user_id;
-                ALTER TABLE public.conversations
-                    ADD COLUMN user_id INTEGER NOT NULL REFERENCES public.users(id);
+                RAISE EXCEPTION
+                    'Legacy UUID conversation owners require an operator-reviewed mapping. '
+                    'No rows were changed.';
             END IF;
         END $$;
         """
@@ -68,43 +45,10 @@ def downgrade() -> None:
     op.execute(
         """
         DO $$
-        DECLARE
-            current_type TEXT;
-            constraint_name TEXT;
         BEGIN
-            SELECT data_type
-            INTO current_type
-            FROM information_schema.columns
-            WHERE table_name = 'conversations'
-              AND column_name = 'user_id'
-              AND table_schema = 'public';
-
-            IF current_type = 'integer' THEN
-                DELETE FROM messages;
-                DELETE FROM conversations;
-
-                SELECT tc.constraint_name
-                INTO constraint_name
-                FROM information_schema.table_constraints AS tc
-                JOIN information_schema.key_column_usage AS kcu
-                  ON tc.constraint_name = kcu.constraint_name
-                 AND tc.table_schema = kcu.table_schema
-                WHERE tc.table_name = 'conversations'
-                  AND tc.table_schema = 'public'
-                  AND tc.constraint_type = 'FOREIGN KEY'
-                  AND kcu.column_name = 'user_id'
-                LIMIT 1;
-
-                IF constraint_name IS NOT NULL THEN
-                    EXECUTE format(
-                        'ALTER TABLE public.conversations DROP CONSTRAINT %I',
-                        constraint_name
-                    );
-                END IF;
-
-                ALTER TABLE public.conversations DROP COLUMN user_id;
-                ALTER TABLE public.conversations ADD COLUMN user_id UUID NOT NULL;
-            END IF;
+            RAISE EXCEPTION
+                'Downgrade cannot infer legacy UUID owners from integer user IDs. '
+                'No rows were changed.';
         END $$;
         """
     )

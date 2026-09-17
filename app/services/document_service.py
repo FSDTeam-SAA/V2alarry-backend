@@ -10,6 +10,9 @@ from app.core.config import settings
 from app.db.session import SessionLocal
 from app.models.document import Document
 from app.models.document_chunk import DocumentChunk
+from app.models.user import User
+from app.db.database import AsyncSessionLocal
+from sqlalchemy import or_, select
 from datetime import datetime
 from functools import lru_cache
 
@@ -25,17 +28,22 @@ class DocumentService:
         file_content: bytes, 
         filename: str, 
         uploaded_by: str,
-        title: str = None
+        title: str = None,
+        category: str = "general",
+        is_global: bool = True,
+        target_user_id: int | None = None,
+        target_user_email: str | None = None,
     ) -> Dict[str, Any]:
         """Process uploaded document"""
         
         # Save file
-        file_path = self.upload_dir / f"{uuid.uuid4()}_{filename}"
+        safe_filename = Path(filename).name
+        file_path = self.upload_dir / f"{uuid.uuid4()}_{safe_filename}"
         with open(file_path, "wb") as f:
             f.write(file_content)
         
         # Extract text based on file type
-        file_type = filename.split('.')[-1].lower()
+        file_type = safe_filename.split('.')[-1].lower()
         text = self._extract_text(str(file_path), file_type)
         
         if not text.strip():
@@ -45,12 +53,16 @@ class DocumentService:
         db = SessionLocal()
         try:
             document = Document(
-                title=title or filename,
-                filename=filename,
+                title=title or safe_filename,
+                filename=safe_filename,
                 file_type=file_type,
                 file_path=str(file_path),
                 uploaded_by=int(uploaded_by),
-                status="processing"
+                category=category,
+                file_size_bytes=len(file_content),
+                is_global=is_global,
+                target_user_id=target_user_id,
+                status="processing",
             )
             db.add(document)
             db.commit()
@@ -68,7 +80,9 @@ class DocumentService:
                     "document_id": str(document.id),
                     "chunk_index": i,
                     "content": chunk,
-                    "filename": filename
+                    "filename": safe_filename,
+                    "is_global": is_global,
+                    "target_user_id": target_user_id,
                 }
                 for i, chunk in enumerate(chunks)
             ]
@@ -94,7 +108,12 @@ class DocumentService:
                 "document_id": str(document.id),
                 "chunks": len(chunks),
                 "status": "completed",
-                "message": f"Document processed successfully"
+                "message": "Document processed successfully",
+                "is_global": is_global,
+                "target_user_id": target_user_id,
+                "target_user_email": target_user_email,
+                "category": category,
+                "file_size_bytes": len(file_content),
             }
             
         except Exception as e:
@@ -104,6 +123,20 @@ class DocumentService:
             raise e
         finally:
             db.close()
+
+    async def get_accessible_document_ids(self, user_id: int) -> List[str]:
+        async with AsyncSessionLocal() as db:
+            result = await db.execute(
+                select(Document.id).where(
+                    Document.is_active.is_(True),
+                    Document.status == "completed",
+                    or_(
+                        Document.is_global.is_(True),
+                        Document.target_user_id == user_id,
+                    ),
+                )
+            )
+            return [str(document_id) for document_id in result.scalars().all()]
     
     def _extract_text(self, file_path: str, file_type: str) -> str:
         """Extract text from different file types"""
@@ -195,7 +228,14 @@ class DocumentService:
         """Get all documents"""
         db = SessionLocal()
         try:
-            documents = db.query(Document).offset(skip).limit(limit).all()
+            documents = (
+                db.query(Document, User.email)
+                .outerjoin(User, User.id == Document.target_user_id)
+                .order_by(Document.uploaded_at.desc())
+                .offset(skip)
+                .limit(limit)
+                .all()
+            )
             return [
                 {
                     "id": str(doc.id),
@@ -205,9 +245,14 @@ class DocumentService:
                     "status": doc.status,
                     "chunk_count": doc.chunk_count,
                     "uploaded_at": doc.uploaded_at.isoformat(),
-                    "is_active": doc.is_active
+                    "is_active": doc.is_active,
+                    "category": doc.category,
+                    "file_size_bytes": doc.file_size_bytes,
+                    "is_global": doc.is_global,
+                    "target_user_id": doc.target_user_id,
+                    "target_user_email": target_user_email,
                 }
-                for doc in documents
+                for doc, target_user_email in documents
             ]
         finally:
             db.close()
