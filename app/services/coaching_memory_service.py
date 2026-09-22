@@ -16,6 +16,10 @@ Use HARVEST -> CLASSIFY -> UPDATE -> HOLD -> ASSESS:
 - Preserve useful prior state unless the new message changes it.
 - A held clue is a tentative hypothesis, never a fact. Mark it active, strengthened, weakened, or superseded as evidence changes.
 - Record unresolved items and signs of the leader's emerging agency.
+- Set a coaching stage and one next coaching move for the current turn. Discovery is the safe default when the situation is ambiguous or rests on interpretation.
+- Record every essential unknown that still blocks a later move. Distinguish missing direct evidence, observable patterns, interpretation separation, desired help, prior attempts, and a user-owned outcome.
+- Use transition basis only for evidence that supports the selected stage, including a user-owned outcome before action.
+- Do not move to possibilities until the relevant uncertainty is resolved and the leader's desired help is known. Do not move to action until a grounded, user-owned outcome supports a small experiment or commitment.
 - Do not diagnose, invent events, infer protected traits, or make a clue permanent.
 """
 

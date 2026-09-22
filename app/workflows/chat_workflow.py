@@ -8,6 +8,7 @@ from app.core.config import settings
 from app.core.cache import cache_get, cache_set, make_cache_key
 from app.schemas.coaching import CoachingSummaryData, CoachingWorkingState
 from app.services.coaching_memory_service import CoachingMemoryService
+from app.services.coaching_policy_service import CoachingPolicyService
 from app.services.document_service import DocumentService
 import json
 import logging
@@ -37,8 +38,8 @@ Your purpose is to help leaders think clearly and take practical action in situa
 
 Coaching approach:
 1. Start with a brief, accurate reflection of the leader's situation when it is useful.
-2. If an essential detail is missing, ask one focused question before offering a plan. Do not turn every response into a questionnaire.
-3. When enough context is available, offer practical options, tradeoffs, a useful framework, language the leader can adapt, and a practical next step.
+2. The server-provided coaching policy decides whether an essential detail is missing and which move is permitted. When it permits discovery, ask one focused question before offering a plan. Do not turn every response into a questionnaire.
+3. Only when the server-provided coaching policy permits it, offer practical options, tradeoffs, a useful framework, language the leader can adapt, and a practical next step.
 4. Keep the leader in control of decisions. Do not diagnose people, assign motives, manipulate others, or present one option as guaranteed.
 5. Be warm, direct, concise, and specific. Avoid generic encouragement, management jargon, and invented facts.
 6. Distinguish direct observation from interpretation. Surface at most one tentative hypothesis at a time, label it as tentative, and invite the leader to test it.
@@ -131,6 +132,18 @@ class WorkflowNodes:
 
         return state
 
+    async def assess_coaching_move(self, state: Dict[str, Any]) -> Dict[str, Any]:
+        working_state = CoachingWorkingState.model_validate(
+            state.get("working_state", {})
+        )
+        decision = CoachingPolicyService.enforce(working_state)
+
+        state["working_state"] = decision.model_dump()
+        state["metadata"]["coaching_stage"] = decision.coaching_stage
+        state["metadata"]["next_coaching_move"] = decision.next_coaching_move
+
+        return state
+
     async def _fetch_history(
         self, user_id: str, conversation_id: Optional[str]
     ) -> List[Dict]:
@@ -208,6 +221,7 @@ class WorkflowNodes:
     async def generate_response(self, state: Dict[str, Any]) -> Dict[str, Any]:
         message = state.get("message")
         context = state.get("context", "")
+        coaching_policy = self._get_coaching_policy(state)
 
         response = await self.llm_service.generate(
             system_prompt=LEADERSHIP_COACH_SYSTEM_PROMPT,
@@ -215,6 +229,7 @@ class WorkflowNodes:
             history=state.get("user_history", []),
             knowledge_context=context or None,
             coaching_context=state.get("coaching_context") or None,
+            coaching_policy=coaching_policy,
         )
 
         state["response"] = response
@@ -227,6 +242,7 @@ class WorkflowNodes:
     ) -> AsyncIterator[str]:
         message = state.get("message")
         context = state.get("context", "")
+        coaching_policy = self._get_coaching_policy(state)
 
         full_response = ""
         async for token in self.llm_service.generate_stream(
@@ -235,12 +251,20 @@ class WorkflowNodes:
             history=state.get("user_history", []),
             knowledge_context=context or None,
             coaching_context=state.get("coaching_context") or None,
+            coaching_policy=coaching_policy,
         ):
             full_response += token
             yield json.dumps({"type": "token", "content": token}) + "\n"
 
         state["response"] = full_response
         state["metadata"]["response_length"] = len(full_response)
+
+    @staticmethod
+    def _get_coaching_policy(state: Dict[str, Any]) -> str:
+        working_state = CoachingWorkingState.model_validate(
+            state.get("working_state", {})
+        )
+        return CoachingPolicyService.build_response_policy(working_state)
 
     async def save_conversation(self, state: Dict[str, Any]) -> Dict[str, Any]:
         user_id = state.get("user_id")
@@ -375,12 +399,14 @@ class ChatWorkflow:
         workflow = StateGraph(ChatState)
 
         workflow.add_node("retrieve_data", self.nodes.retrieve_data)
+        workflow.add_node("assess_coaching_move", self.nodes.assess_coaching_move)
         workflow.add_node("generate_context", self.nodes.generate_context)
         workflow.add_node("generate_response", self.nodes.generate_response)
         workflow.add_node("save_conversation", self.nodes.save_conversation)
 
         workflow.set_entry_point("retrieve_data")
-        workflow.add_edge("retrieve_data", "generate_context")
+        workflow.add_edge("retrieve_data", "assess_coaching_move")
+        workflow.add_edge("assess_coaching_move", "generate_context")
         workflow.add_edge("generate_context", "generate_response")
         workflow.add_edge("generate_response", "save_conversation")
         workflow.add_edge("save_conversation", END)
@@ -436,6 +462,7 @@ class ChatWorkflow:
         yield json.dumps({"type": "status", "status": "accepted"})
         yield json.dumps({"type": "status", "status": "retrieving_context"})
         state = await nodes.retrieve_data(initial_state)
+        state = await nodes.assess_coaching_move(state)
         yield json.dumps({"type": "status", "status": "building_context"})
         state = await nodes.generate_context(state)
 

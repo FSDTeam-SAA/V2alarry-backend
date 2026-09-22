@@ -7,7 +7,14 @@ from app.workflows.chat_workflow import ChatWorkflow
 
 
 class _WorkflowNodes:
+    def __init__(self):
+        self.assessment_completed = False
+
     async def retrieve_data(self, state):
+        return state
+
+    async def assess_coaching_move(self, state):
+        self.assessment_completed = True
         return state
 
     async def generate_context(self, state):
@@ -66,6 +73,7 @@ class ChatStreamContractTests(unittest.IsolatedAsyncioTestCase):
                 "persisted": True,
             },
         )
+        self.assertTrue(workflow.nodes.assessment_completed)
 
     async def test_stream_errors_are_safe_for_the_browser(self):
         events = [

@@ -3,6 +3,34 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 
+CoachingStage = Literal["discovery", "reflection", "possibilities", "action"]
+CoachingMove = Literal[
+    "reflect",
+    "clarify",
+    "separate_observation_from_interpretation",
+    "explore_desired_help",
+    "explore_options",
+    "develop_experiment",
+    "consolidate_commitment",
+]
+EssentialUnknown = Literal[
+    "direct_evidence",
+    "observable_pattern",
+    "interpretation_separation",
+    "desired_help",
+    "prior_attempts",
+    "user_owned_outcome",
+]
+TransitionBasis = Literal[
+    "grounded_evidence",
+    "observation_interpretation_distinction",
+    "desired_help_known",
+    "prior_attempts_known",
+    "user_owned_outcome",
+    "policy_downgrade",
+]
+
+
 class HeldClue(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -22,6 +50,10 @@ class CoachingWorkingState(BaseModel):
     held_clues: list[HeldClue] = Field(default_factory=list, max_length=10)
     unresolved_items: list[str] = Field(default_factory=list, max_length=20)
     emerging_agency: list[str] = Field(default_factory=list, max_length=20)
+    coaching_stage: CoachingStage = "discovery"
+    next_coaching_move: CoachingMove = "clarify"
+    essential_unknowns: list[EssentialUnknown] = Field(default_factory=list, max_length=6)
+    transition_basis: list[TransitionBasis] = Field(default_factory=list, max_length=6)
 
 
 class CoachingSummaryData(BaseModel):

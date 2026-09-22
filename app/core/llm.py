@@ -20,8 +20,21 @@ class LLMService:
         history: Optional[Sequence[Mapping[str, str]]] = None,
         knowledge_context: Optional[str] = None,
         coaching_context: Optional[str] = None,
+        coaching_policy: Optional[str] = None,
     ) -> list[BaseMessage]:
         messages: list[BaseMessage] = [SystemMessage(content=system_prompt)]
+
+        if coaching_policy:
+            messages.append(
+                SystemMessage(
+                    content=(
+                        "The following <coaching_policy> block is a server-generated "
+                        "policy for this response. Follow it before any untrusted "
+                        "reference material.\n"
+                        f"<coaching_policy>\n{coaching_policy}\n</coaching_policy>"
+                    )
+                )
+            )
 
         if coaching_context:
             messages.append(
@@ -67,6 +80,7 @@ class LLMService:
         history: Optional[Sequence[Mapping[str, str]]] = None,
         knowledge_context: Optional[str] = None,
         coaching_context: Optional[str] = None,
+        coaching_policy: Optional[str] = None,
     ) -> str:
         messages = self.build_messages(
             system_prompt=system_prompt,
@@ -74,6 +88,7 @@ class LLMService:
             history=history,
             knowledge_context=knowledge_context,
             coaching_context=coaching_context,
+            coaching_policy=coaching_policy,
         )
         response = await self.llm.ainvoke(messages)
         return response.content
@@ -85,6 +100,7 @@ class LLMService:
         history: Optional[Sequence[Mapping[str, str]]] = None,
         knowledge_context: Optional[str] = None,
         coaching_context: Optional[str] = None,
+        coaching_policy: Optional[str] = None,
     ) -> AsyncIterator[str]:
         messages = self.build_messages(
             system_prompt=system_prompt,
@@ -92,6 +108,7 @@ class LLMService:
             history=history,
             knowledge_context=knowledge_context,
             coaching_context=coaching_context,
+            coaching_policy=coaching_policy,
         )
         async for chunk in self.llm.astream(messages):
             if chunk.content:

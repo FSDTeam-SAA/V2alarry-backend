@@ -6,6 +6,7 @@ from pydantic import ValidationError
 
 from app.schemas.coaching import CoachingSummaryData, CoachingWorkingState, HeldClue
 from app.services.coaching_memory_service import WORKING_STATE_PROMPT
+from app.services.coaching_policy_service import CoachingPolicyService
 from app.workflows.chat_workflow import LEADERSHIP_COACH_SYSTEM_PROMPT
 from app.workflows.chat_workflow import WorkflowNodes
 
@@ -31,6 +32,64 @@ class CoachingMemoryContractTests(unittest.TestCase):
         with self.assertRaises(ValidationError):
             HeldClue(text="Unsupported hypothesis", status="permanent")
 
+    def test_legacy_working_state_defaults_to_discovery(self):
+        state = CoachingWorkingState.model_validate(
+            {
+                "current_concern": "I am unsure how my manager sees me.",
+                "interpretations_feelings": ["I feel judged."],
+            }
+        )
+
+        self.assertEqual(state.coaching_stage, "discovery")
+        self.assertEqual(state.next_coaching_move, "clarify")
+        self.assertEqual(state.essential_unknowns, [])
+
+    def test_policy_downgrades_an_ungrounded_interpretation_to_discovery(self):
+        state = CoachingWorkingState(
+            current_concern="My boss thinks I am lazy.",
+            interpretations_feelings=["I feel my boss sees me as lazy."],
+            coaching_stage="action",
+            next_coaching_move="develop_experiment",
+        )
+
+        decision = CoachingPolicyService.enforce(state)
+
+        self.assertEqual(decision.coaching_stage, "discovery")
+        self.assertEqual(decision.next_coaching_move, "clarify")
+        self.assertIn("direct_evidence", decision.essential_unknowns)
+        self.assertIn("observable_pattern", decision.essential_unknowns)
+
+    def test_policy_keeps_a_grounded_user_owned_action(self):
+        state = CoachingWorkingState(
+            current_concern="I need to address missed deadlines.",
+            reported_facts=["My manager named two missed deadlines."],
+            observations=["Two deadlines were missed."],
+            coaching_stage="action",
+            next_coaching_move="develop_experiment",
+            transition_basis=["grounded_evidence", "user_owned_outcome"],
+        )
+
+        decision = CoachingPolicyService.enforce(state)
+
+        self.assertEqual(decision.coaching_stage, "action")
+        self.assertEqual(decision.next_coaching_move, "develop_experiment")
+
+    def test_policy_requires_a_user_owned_outcome_before_action(self):
+        state = CoachingWorkingState(
+            current_concern="I need to address missed deadlines.",
+            reported_facts=["My manager named two missed deadlines."],
+            observations=["Two deadlines were missed."],
+            coaching_stage="action",
+            next_coaching_move="develop_experiment",
+            transition_basis=["grounded_evidence"],
+        )
+
+        decision = CoachingPolicyService.enforce(state)
+
+        self.assertEqual(decision.coaching_stage, "possibilities")
+        self.assertEqual(decision.next_coaching_move, "explore_options")
+        self.assertIn("user_owned_outcome", decision.essential_unknowns)
+
     def test_summary_contract_is_structured_and_does_not_contain_transcripts(self):
         fields = CoachingSummaryData.model_fields
         self.assertNotIn("messages", fields)
@@ -54,12 +113,33 @@ class CoachingMemoryContractTests(unittest.TestCase):
         self.assertIn("observation", extraction_prompt)
         self.assertIn("interpretation", extraction_prompt)
         self.assertIn("strengthened", extraction_prompt)
+        self.assertIn("coaching stage", extraction_prompt)
+        self.assertIn("essential unknown", extraction_prompt)
         self.assertNotIn("boss thinks i'm lazy", extraction_prompt)
         self.assertIn("one tentative hypothesis", coaching_prompt)
         self.assertIn("vary", coaching_prompt)
 
 
 class CoachingMemoryWorkflowTests(unittest.IsolatedAsyncioTestCase):
+    async def test_assessment_records_the_enforced_stage_and_move(self):
+        nodes = WorkflowNodes.__new__(WorkflowNodes)
+        state = {
+            "working_state": CoachingWorkingState(
+                current_concern="My boss thinks I am lazy.",
+                interpretations_feelings=["I feel judged as lazy."],
+                coaching_stage="action",
+                next_coaching_move="develop_experiment",
+            ).model_dump(),
+            "metadata": {},
+        }
+
+        result = await nodes.assess_coaching_move(state)
+
+        self.assertEqual(result["working_state"]["coaching_stage"], "discovery")
+        self.assertEqual(result["working_state"]["next_coaching_move"], "clarify")
+        self.assertEqual(result["metadata"]["coaching_stage"], "discovery")
+        self.assertEqual(result["metadata"]["next_coaching_move"], "clarify")
+
     async def test_summary_failure_keeps_the_saved_chat_turn_and_marks_summary_stale(self):
         nodes = WorkflowNodes.__new__(WorkflowNodes)
         nodes.chat_history_service = SimpleNamespace(
