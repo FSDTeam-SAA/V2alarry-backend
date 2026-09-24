@@ -424,6 +424,25 @@ GOOGLE_CLIENT_ID=your-google-oauth-web-client-id
 NextAuth application. The Google client secret belongs in the Next.js server
 environment, not in this backend endpoint.
 
+### Password recovery email configuration
+
+Password-reset codes are delivered through Gmail SMTP. Add these variables to
+the backend deployment environment:
+
+```dotenv
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=465
+SMTP_USERNAME=your-gmail-address@example.com
+SMTP_PASSWORD=your-16-character-google-app-password
+SMTP_FROM_EMAIL="LeaderCoach <your-gmail-address@example.com>"
+SMTP_TIMEOUT_SECONDS=10
+```
+
+Use a Google App Password, not the Gmail account password. The account must
+have 2-Step Verification enabled. Keep `SMTP_PASSWORD` only in the backend
+environment and use an address or configured Gmail alias that the account is
+permitted to send from.
+
 ## Document metadata and dashboard API support
 
 Changed files:

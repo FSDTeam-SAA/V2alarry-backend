@@ -1,8 +1,10 @@
 import hashlib
+import hmac
+import logging
 import secrets
 from datetime import datetime, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from fastapi.concurrency import run_in_threadpool
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -10,31 +12,103 @@ from app.core.config import settings
 from app.core.agreements import CURRENT_AGREEMENT_VERSION
 from app.db.session import get_db
 from app.models.refresh_token import RefreshToken
+from app.models.password_reset_code import PasswordResetCode
 from app.schemas.user import (
     GoogleLoginRequest,
     RefreshTokenRequest,
+    PasswordResetRequest,
+    ResetPasswordRequest,
     TokenResponse,
     UserCreate,
     UserLogin,
     UserResponse,
+    VerifyResetOtpRequest,
 )
+from app.repositories.password_reset_code_repository import PasswordResetCodeRepository
 from app.repositories.refresh_token_repository import RefreshTokenRepository
 from app.repositories.agreement_repository import AgreementRepository
 from app.repositories.user_repository import UserRepository
 from app.services.auth_service import AuthService
 from app.services.google_auth_service import GoogleAuthService, GoogleIdentityError
+from app.services.password_reset_email_service import (
+    PasswordResetEmailDeliveryError,
+    PasswordResetEmailService,
+)
+from app.utils.security import has_password
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 user_repo = UserRepository()
 auth_service = AuthService()
 refresh_token_repo = RefreshTokenRepository()
+password_reset_code_repo = PasswordResetCodeRepository()
 agreement_repo = AgreementRepository()
 google_auth_service = GoogleAuthService()
+password_reset_email_service = PasswordResetEmailService()
 
 
 def _token_hash(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def _utcnow() -> datetime:
+    return datetime.utcnow()
+
+
+def _new_reset_code() -> str:
+    return f"{secrets.randbelow(1_000_000):06d}"
+
+
+def _reset_code_hash(user_id: int, code: str) -> str:
+    return hmac.new(
+        settings.SECRET_KEY.encode("utf-8"),
+        f"{user_id}:{code}".encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+
+
+def _password_recovery_is_available(user) -> bool:
+    return bool(user and user.is_active and user.password_login_enabled)
+
+
+def _invalid_reset_code() -> HTTPException:
+    return HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Code is invalid or expired")
+
+
+async def _get_reset_record(
+    db: AsyncSession,
+    email: str,
+) -> tuple[object, PasswordResetCode]:
+    user = await user_repo.get_by_email(db, email)
+    if not _password_recovery_is_available(user):
+        raise _invalid_reset_code()
+
+    reset_code = await password_reset_code_repo.get_latest_for_user(db, user.id)
+    now = _utcnow()
+    if (
+        not reset_code
+        or reset_code.used_at is not None
+        or reset_code.expires_at <= now
+        or reset_code.attempt_count >= settings.PASSWORD_RESET_MAX_ATTEMPTS
+    ):
+        raise _invalid_reset_code()
+
+    return user, reset_code
+
+
+async def _validate_reset_code(
+    db: AsyncSession,
+    user,
+    reset_code: PasswordResetCode,
+    code: str,
+) -> datetime:
+    now = _utcnow()
+    if not hmac.compare_digest(reset_code.code_hash, _reset_code_hash(user.id, code)):
+        await password_reset_code_repo.increment_attempts(db, reset_code)
+        await db.commit()
+        raise _invalid_reset_code()
+    return now
 
 
 async def _issue_tokens(db: AsyncSession, user) -> TokenResponse:
@@ -115,6 +189,80 @@ async def login(user_data: UserLogin, db: AsyncSession = Depends(get_db)):
         )
 
     return await _issue_tokens(db, auth_user)
+
+
+@router.post("/forgot-password", status_code=status.HTTP_202_ACCEPTED)
+async def forgot_password(
+    request: PasswordResetRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    user = await user_repo.get_by_email(db, request.email)
+    if not _password_recovery_is_available(user):
+        return Response(status_code=status.HTTP_202_ACCEPTED)
+
+    now = _utcnow()
+    latest_code = await password_reset_code_repo.get_latest_for_user(db, user.id)
+    request_count = await password_reset_code_repo.count_requests_since(
+        db,
+        user.id,
+        now - timedelta(minutes=settings.PASSWORD_RESET_REQUEST_WINDOW_MINUTES),
+    )
+    is_cooling_down = bool(
+        latest_code
+        and latest_code.requested_at
+        > now - timedelta(seconds=settings.PASSWORD_RESET_REQUEST_COOLDOWN_SECONDS)
+    )
+    if request_count >= settings.PASSWORD_RESET_REQUEST_LIMIT or is_cooling_down:
+        return Response(status_code=status.HTTP_202_ACCEPTED)
+
+    code = _new_reset_code()
+    reset_code = PasswordResetCode(
+        user_id=user.id,
+        code_hash=_reset_code_hash(user.id, code),
+        expires_at=now + timedelta(minutes=settings.PASSWORD_RESET_CODE_TTL_MINUTES),
+        requested_at=now,
+        attempt_count=0,
+    )
+    try:
+        await password_reset_code_repo.invalidate_active_for_user(db, user.id, now)
+        await password_reset_code_repo.create(db, reset_code)
+        await password_reset_email_service.send_code(user.email, code)
+        await db.commit()
+    except PasswordResetEmailDeliveryError as error:
+        await db.rollback()
+        logger.warning("Password recovery email delivery failed: %s", error)
+        return Response(status_code=status.HTTP_202_ACCEPTED)
+
+    return Response(status_code=status.HTTP_202_ACCEPTED)
+
+
+@router.post("/verify-reset-otp", status_code=status.HTTP_204_NO_CONTENT)
+async def verify_reset_otp(
+    request: VerifyResetOtpRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    user, reset_code = await _get_reset_record(db, request.email)
+    now = await _validate_reset_code(db, user, reset_code, request.code)
+    if reset_code.verified_at is None:
+        await password_reset_code_repo.mark_verified(db, reset_code, now)
+        await db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post("/reset-password", status_code=status.HTTP_204_NO_CONTENT)
+async def reset_password(
+    request: ResetPasswordRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    user, reset_code = await _get_reset_record(db, request.email)
+    now = await _validate_reset_code(db, user, reset_code, request.code)
+    if reset_code.verified_at is None:
+        raise _invalid_reset_code()
+
+    user.hashed_password = has_password(request.new_password)
+    await password_reset_code_repo.consume(db, reset_code, now)
+    await refresh_token_repo.revoke_all_for_user(db, user.id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post("/refresh", response_model=TokenResponse)

@@ -20,7 +20,18 @@ class Settings(BaseSettings):
     ALGORITHM: str
     ACCESS_TOKEN_EXPIRE_MINUTES: int
     REFRESH_TOKEN_EXPIRE_DAYS: int = 30
-    GOOGLE_CLIENT_ID: str = ""
+    GOOGLE_CLIENT_ID: str = "16217334115-0o69vmkih52rqbmkh3cnbpslmk68h0dp.apps.googleusercontent.com"
+    SMTP_HOST: str = "smtp.gmail.com"
+    SMTP_PORT: int = 465
+    SMTP_USERNAME: str = ""
+    SMTP_PASSWORD: str = ""
+    SMTP_FROM_EMAIL: str = ""
+    SMTP_TIMEOUT_SECONDS: int = 10
+    PASSWORD_RESET_CODE_TTL_MINUTES: int = 10
+    PASSWORD_RESET_REQUEST_COOLDOWN_SECONDS: int = 60
+    PASSWORD_RESET_REQUEST_LIMIT: int = 3
+    PASSWORD_RESET_REQUEST_WINDOW_MINUTES: int = 15
+    PASSWORD_RESET_MAX_ATTEMPTS: int = 5
 
     # Vector DB
     VECTOR_DB_URL: str = "http://localhost:6333"

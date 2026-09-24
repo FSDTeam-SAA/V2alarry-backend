@@ -93,6 +93,18 @@ class PasswordChangeRequest(BaseModel):
     new_password: str = Field(min_length=8, max_length=128)
 
 
+class PasswordResetRequest(BaseModel):
+    email: EmailStr
+
+
+class VerifyResetOtpRequest(PasswordResetRequest):
+    code: str = Field(pattern=r"^\d{6}$")
+
+
+class ResetPasswordRequest(VerifyResetOtpRequest):
+    new_password: str = Field(min_length=8, max_length=128)
+
+
 class AgreementAcceptanceCreate(BaseModel):
     agreement_version: str
     source: Literal["credentials", "google", "consent-gate", "settings"]
