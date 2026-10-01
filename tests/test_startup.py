@@ -2,9 +2,13 @@ import unittest
 from unittest.mock import patch
 
 from app import main
+from app.db.database import engine
 
 
 class StartupTests(unittest.IsolatedAsyncioTestCase):
+    def test_async_engine_validates_pooled_connections_before_use(self):
+        self.assertTrue(engine.pool._pre_ping)
+
     @patch("app.main.ensure_schema_compatibility")
     @patch(
         "app.main.preload_embedding_model",
