@@ -9,7 +9,13 @@ CoachingMove = Literal[
     "clarify",
     "separate_observation_from_interpretation",
     "explore_desired_help",
+    "explore_readiness",
     "explore_options",
+    "deepen",
+    "shift_focus",
+    "challenge_tentatively",
+    "test_understanding",
+    "teach_selectively",
     "develop_experiment",
     "consolidate_commitment",
 ]
@@ -20,6 +26,9 @@ EssentialUnknown = Literal[
     "desired_help",
     "prior_attempts",
     "user_owned_outcome",
+    "tested_understanding",
+    "readiness",
+    "knowledge_gap",
 ]
 TransitionBasis = Literal[
     "grounded_evidence",
@@ -27,8 +36,29 @@ TransitionBasis = Literal[
     "desired_help_known",
     "prior_attempts_known",
     "user_owned_outcome",
+    "tested_understanding",
+    "knowledge_gap_observed",
+    "client_feedback_reopened_discovery",
     "policy_downgrade",
 ]
+ClientResponseToLastMove = Literal[
+    "not_applicable",
+    "affirmed",
+    "refined",
+    "corrected",
+    "new_evidence",
+    "not_ready",
+    "declined",
+]
+AnswerLevel = Literal[
+    "unknown",
+    "action",
+    "feeling",
+    "role",
+    "contribution",
+    "commitment",
+]
+ClientGeneration = Literal["unknown", "emerging", "productive"]
 
 
 class HeldClue(BaseModel):
@@ -52,8 +82,18 @@ class CoachingWorkingState(BaseModel):
     emerging_agency: list[str] = Field(default_factory=list, max_length=20)
     coaching_stage: CoachingStage = "discovery"
     next_coaching_move: CoachingMove = "clarify"
-    essential_unknowns: list[EssentialUnknown] = Field(default_factory=list, max_length=6)
-    transition_basis: list[TransitionBasis] = Field(default_factory=list, max_length=6)
+    last_coaching_move: CoachingMove | None = None
+    client_response_to_last_move: ClientResponseToLastMove = "not_applicable"
+    answer_level: AnswerLevel = "unknown"
+    client_generation: ClientGeneration = "unknown"
+    essential_unknowns: list[EssentialUnknown] = Field(default_factory=list, max_length=9)
+    transition_basis: list[TransitionBasis] = Field(default_factory=list, max_length=9)
+
+
+class RelevantSummarySelection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    relevant_indices: list[int] = Field(default_factory=list, max_length=3)
 
 
 class CoachingSummaryData(BaseModel):
