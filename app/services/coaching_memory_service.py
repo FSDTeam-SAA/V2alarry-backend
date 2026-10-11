@@ -3,6 +3,7 @@ import asyncio
 from typing import TypeVar
 
 from pydantic import BaseModel, ValidationError
+from langchain_core.exceptions import OutputParserException
 
 from app.core.llm import LLMService
 from app.schemas.coaching import (
@@ -77,6 +78,16 @@ class CoachingMemoryService:
             content = "\n".join(lines)
         return schema.model_validate(json.loads(content))
 
+    async def _generate_schema(self, prompt: str, request: dict, schema: type[SchemaType]) -> SchemaType:
+        if hasattr(self.llm_service, "generate_structured"):
+            payload = {key: value for key, value in request.items() if key != "schema"}
+            result = await self.llm_service.generate_structured(
+                system_prompt=prompt, user_message=json.dumps(payload), schema=schema,
+            )
+            return schema.model_validate(result)
+        raw = await self.llm_service.generate(system_prompt=prompt, user_message=json.dumps(request))
+        return self._parse_json(raw, schema)
+
     @staticmethod
     def prepare_state_for_turn(
         previous_state: CoachingWorkingState,
@@ -114,11 +125,7 @@ class CoachingMemoryService:
                 for index, summary in enumerate(summaries)
             ],
         }
-        raw = await self.llm_service.generate(
-            system_prompt=SUMMARY_RETRIEVAL_PROMPT,
-            user_message=json.dumps(request),
-        )
-        selection = self._parse_json(raw, RelevantSummarySelection)
+        selection = await self._generate_schema(SUMMARY_RETRIEVAL_PROMPT, request, RelevantSummarySelection)
         indices = list(dict.fromkeys(selection.relevant_indices))
         return [summaries[index] for index in indices if 0 <= index < len(summaries)]
 
@@ -145,14 +152,9 @@ class CoachingMemoryService:
         }
         for attempt in range(2):
             try:
-                raw = await asyncio.wait_for(self.llm_service.generate(
-                    system_prompt=WORKING_STATE_PROMPT,
-                    user_message=json.dumps(request),
-                ), timeout=30)
-            except Exception as exc:
-                raise WorkingStateExtractionError("provider") from exc
-            try:
-                extracted = self._parse_json(raw, CoachingWorkingState)
+                extracted = await asyncio.wait_for(
+                    self._generate_schema(WORKING_STATE_PROMPT, request, CoachingWorkingState), timeout=30,
+                )
                 if not any((extracted.current_concern, extracted.reported_facts,
                             extracted.observations, extracted.interpretations_feelings)):
                     raise WorkingStateExtractionError("semantic_empty")
@@ -160,15 +162,17 @@ class CoachingMemoryService:
                 return extracted.model_copy(
                     update={"last_coaching_move": previous_state.last_coaching_move}
                 )
-            except (json.JSONDecodeError, ValidationError, WorkingStateExtractionError) as exc:
+            except (json.JSONDecodeError, ValidationError, OutputParserException, WorkingStateExtractionError) as exc:
                 category = (exc.category if isinstance(exc, WorkingStateExtractionError)
-                            else "schema" if isinstance(exc, ValidationError) else "json")
+                            else "schema" if isinstance(exc, (ValidationError, OutputParserException)) else "json")
                 if attempt == 1:
                     raise WorkingStateExtractionError(category) from exc
                 request["recovery"] = (
                     f"Previous extraction failed ({category}). Re-extract from the supplied "
                     "evidence. Preserve valid prior facts, distinguish corrections, and satisfy the schema."
                 )
+            except Exception as exc:
+                raise WorkingStateExtractionError("provider") from exc
 
     @staticmethod
     def validate_assessments(state: CoachingWorkingState, request: dict) -> None:
@@ -226,11 +230,7 @@ class CoachingMemoryService:
                 "coach": assistant_response,
             },
         }
-        raw = await self.llm_service.generate(
-            system_prompt=SUMMARY_PROMPT,
-            user_message=json.dumps(request),
-        )
-        candidate = self._parse_json(raw, CoachingSummaryData)
+        candidate = await self._generate_schema(SUMMARY_PROMPT, request, CoachingSummaryData)
         return self._apply_retention_gate(
             previous_summary=previous_summary,
             candidate=candidate,

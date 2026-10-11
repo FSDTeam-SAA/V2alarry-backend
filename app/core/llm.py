@@ -2,6 +2,11 @@ from langchain_openai import ChatOpenAI
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 from typing import AsyncIterator, Mapping, Optional, Sequence
 from app.core.config import settings
+from pydantic import BaseModel
+from typing import TypeVar
+
+
+SchemaType = TypeVar("SchemaType", bound=BaseModel)
 
 
 class LLMService:
@@ -113,3 +118,15 @@ class LLMService:
         async for chunk in self.llm.astream(messages):
             if chunk.content:
                 yield chunk.content
+
+    async def generate_structured(
+        self, *, system_prompt: str, user_message: str, schema: type[SchemaType],
+    ) -> SchemaType:
+        # Function calling supports the configured older model as well as newer models.
+        structured = self.llm.with_structured_output(
+            schema, method="function_calling", include_raw=True,
+        )
+        result = await structured.ainvoke(self.build_messages(system_prompt, user_message))
+        if result.get("parsing_error") is not None:
+            raise result["parsing_error"]
+        return schema.model_validate(result.get("parsed"))

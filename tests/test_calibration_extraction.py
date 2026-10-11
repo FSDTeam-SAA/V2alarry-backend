@@ -4,9 +4,19 @@ from unittest.mock import AsyncMock
 
 from app.schemas.coaching import CoachingWorkingState
 from app.services.coaching_memory_service import CoachingMemoryService
+from app.core.llm import LLMService
 
 
 class ExtractionRecoveryTests(unittest.IsolatedAsyncioTestCase):
+    async def test_provider_native_structure_is_used_and_validated(self):
+        state = CoachingWorkingState(reported_facts=["I own priorities"])
+        llm = SimpleNamespace(generate_structured=AsyncMock(return_value=state))
+        result = await CoachingMemoryService(llm).update_working_state(
+            previous_state=CoachingWorkingState(), user_message="I own priorities",
+        )
+        self.assertEqual(result.reported_facts, state.reported_facts)
+        self.assertEqual(llm.generate_structured.call_args.kwargs["schema"], CoachingWorkingState)
+
     async def test_malformed_json_has_one_bounded_recovery(self):
         llm = SimpleNamespace(generate=AsyncMock(side_effect=["not json", '{"reported_facts":["I own the priorities"]}']))
         result = await CoachingMemoryService(llm).update_working_state(
