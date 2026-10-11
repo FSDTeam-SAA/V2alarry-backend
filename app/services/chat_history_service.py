@@ -145,6 +145,9 @@ class ChatHistoryService:
                 conv_obj.title = title
 
             if working_state is not None:
+                # Turn-scoped assessments live in the linked trace, not durable client state.
+                durable_state = {key: value for key, value in working_state.items()
+                                 if key not in {"focus_assessment", "interaction_assessment"}}
                 state_result = await db.execute(
                     select(CoachingWorkingState).where(
                         CoachingWorkingState.conversation_id == conv_uuid
@@ -152,13 +155,13 @@ class ChatHistoryService:
                 )
                 state_record = state_result.scalar_one_or_none()
                 if state_record:
-                    state_record.state = working_state
+                    state_record.state = durable_state
                     state_record.source_turn_count = source_turn_count
                 else:
                     db.add(
                         CoachingWorkingState(
                             conversation_id=conv_uuid,
-                            state=working_state,
+                            state=durable_state,
                             source_turn_count=source_turn_count,
                         )
                     )

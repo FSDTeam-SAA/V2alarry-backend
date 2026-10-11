@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from app.models.message import Message
+from app.models.coaching_working_state import CoachingWorkingState as StateRecord
 from app.services.chat_history_service import ChatHistoryService
 from app.workflows.chat_workflow import WorkflowNodes
 
@@ -32,7 +33,7 @@ class TurnPersistenceTests(unittest.IsolatedAsyncioTestCase):
                 user_id="7", conversation_id=str(conversation.id),
                 user_message="I can influence the priorities.", assistant_response="What matters?",
                 metadata={"docs_retrieved": 2, "coaching_trace": {"version": "calibration-2"}},
-                working_state={"reported_facts": ["I can influence priorities"]}, source_turn_count=3,
+                working_state={"reported_facts": ["I can influence priorities"], "interaction_assessment": {"usefulness": "possibly_unhelpful"}}, source_turn_count=3,
             )
         user, assistant = [item for item in added if isinstance(item, Message)]
         self.assertEqual(user.doc_metadata["coaching_trace"]["version"], "calibration-2")
@@ -40,6 +41,8 @@ class TurnPersistenceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(assistant.doc_metadata["user_message_id"], result["user_message_id"])
         self.assertEqual(user.doc_metadata["assistant_message_id"], result["assistant_message_id"])
         self.assertLess(user.created_at, assistant.created_at)
+        saved_state = next(item for item in added if isinstance(item, StateRecord))
+        self.assertNotIn("interaction_assessment", saved_state.state)
 
     async def test_internal_trace_is_saved_without_entering_public_metadata(self):
         nodes = WorkflowNodes.__new__(WorkflowNodes)

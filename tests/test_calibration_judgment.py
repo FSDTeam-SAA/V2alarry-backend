@@ -34,6 +34,7 @@ class ContextualJudgmentTests(unittest.TestCase):
         state = CoachingWorkingState.model_validate({
             "reported_facts": ["Client is unsure where to begin after several suggestions"],
             "coaching_stage": "action", "next_coaching_move": "develop_experiment",
+            "client_response_to_last_move": "refined",
             "transition_basis": ["tested_understanding", "user_owned_outcome"],
             "interaction_assessment": {"usefulness": "possibly_unhelpful",
                 "observation": "The client is uncertain after Jess supplied several directions",

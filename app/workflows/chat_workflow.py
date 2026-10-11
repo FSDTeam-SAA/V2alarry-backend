@@ -7,7 +7,7 @@ from app.core.llm import LLMService
 from app.core.config import settings
 from app.core.cache import cache_get, cache_set, make_cache_key
 from app.schemas.coaching import CoachingSummaryData, CoachingWorkingState
-from app.services.coaching_memory_service import CoachingMemoryService, WorkingStateExtractionError
+from app.services.coaching_memory_service import CoachingMemoryService, WorkingStateExtractionError, EVIDENCE_EXTRACTION_PROMPT, TURN_ASSESSMENT_PROMPT
 from app.services.coaching_policy_service import CoachingPolicyService
 from app.services.document_service import DocumentService
 import json
@@ -33,6 +33,9 @@ class ChatState(TypedDict):
     response: str
     metadata: Dict[str, Any]
     decision_trace: Dict[str, Any]
+    previous_working_state: Dict[str, Any]
+    extraction_failure: Optional[str]
+    assessment_failure: Optional[str]
 
 
 LEADERSHIP_COACH_SYSTEM_PROMPT = """You are Jess, an AI leadership coaching experience.
@@ -78,6 +81,9 @@ class WorkflowNodes:
         user_id = state.get("user_id")
         message = state.get("message")
         conversation_id = state.get("conversation_id")
+
+        if conversation_id and hasattr(self.chat_history_service, "get_or_create_conversation"):
+            await self.chat_history_service.get_or_create_conversation(user_id=user_id, conversation_id=conversation_id)
 
         user_history = await self._fetch_history(user_id, conversation_id)
         state["user_history"] = user_history
@@ -132,6 +138,7 @@ class WorkflowNodes:
                 state["metadata"]["cce_retrieval_status"] = "empty"
             state["metadata"]["cce_retrieved"] = len(relevant_summaries)
 
+        state["previous_working_state"] = previous_state.model_dump()
         memory_service = getattr(self, "coaching_memory_service", None)
         if memory_service:
             try:
@@ -184,6 +191,23 @@ class WorkflowNodes:
         working_state = CoachingWorkingState.model_validate(
             state.get("working_state", {})
         )
+        memory_service = getattr(self, "coaching_memory_service", None)
+        if memory_service and hasattr(memory_service, "assess_turn") and state["metadata"].get("working_state_status") == "updated":
+            try:
+                history = state.get("user_history", [])
+                working_state = await memory_service.assess_turn(
+                    working_state=working_state, user_message=state["message"], history=history,
+                    latest_assistant_response=next((entry["content"] for entry in reversed(history) if entry.get("role") == "assistant"), None),
+                    previous_state=CoachingWorkingState.model_validate(state.get("previous_working_state", {})),
+                )
+                state["metadata"]["assessment_status"] = "updated"
+            except Exception as exc:
+                logger.warning("Turn assessment failed for user %s", state.get("user_id"))
+                state["metadata"]["assessment_status"] = "conservative_fallback"
+                state["assessment_failure"] = exc.category if isinstance(exc, WorkingStateExtractionError) else "unexpected"
+                working_state = CoachingMemoryService.conservative_state(working_state, state["message"]).model_copy(
+                    update={"last_coaching_move": working_state.last_coaching_move},
+                )
         decision = CoachingPolicyService.enforce(working_state)
 
         state["working_state"] = decision.model_dump()
@@ -193,6 +217,10 @@ class WorkflowNodes:
             "version": "calibration-2",
             "model": settings.LLM_MODEL,
             "system_prompt_hash": hashlib.sha256(LEADERSHIP_COACH_SYSTEM_PROMPT.encode()).hexdigest()[:16],
+            "working_state_prompt_hash": hashlib.sha256(EVIDENCE_EXTRACTION_PROMPT.encode()).hexdigest()[:16],
+            "assessment_prompt_hash": hashlib.sha256(TURN_ASSESSMENT_PROMPT.encode()).hexdigest()[:16],
+            "assessment_status": state["metadata"].get("assessment_status", "unavailable"),
+            "response_policy_hash": hashlib.sha256(CoachingPolicyService.build_response_policy(decision).encode()).hexdigest()[:16],
             "extraction_status": state["metadata"].get("working_state_status", "unavailable"),
             "proposed_stage": working_state.coaching_stage,
             "proposed_move": working_state.next_coaching_move,
@@ -200,6 +228,12 @@ class WorkflowNodes:
             "enforced_move": decision.next_coaching_move,
             "source_turn_count": state.get("source_turn_count", 0),
             "extraction_failure": state.get("extraction_failure"),
+            "assessment_failure": state.get("assessment_failure"),
+            "essential_unknowns": decision.essential_unknowns,
+            "transition_basis": decision.transition_basis,
+            "client_feedback": decision.client_response_to_last_move,
+            "client_generation": decision.client_generation,
+            "answer_level": decision.answer_level,
             "focus_assessment": decision.focus_assessment.model_dump() if decision.focus_assessment else None,
             "interaction_assessment": decision.interaction_assessment.model_dump() if decision.interaction_assessment else None,
         }

@@ -16,6 +16,8 @@ class LLMService:
             temperature=settings.LLM_TEMPERATURE,
             max_tokens=settings.MAX_TOKENS,
             openai_api_key=settings.OPENAI_API_KEY,
+            timeout=30,
+            max_retries=1,
         )
 
     @staticmethod
@@ -122,9 +124,11 @@ class LLMService:
     async def generate_structured(
         self, *, system_prompt: str, user_message: str, schema: type[SchemaType],
     ) -> SchemaType:
-        # Function calling supports the configured older model as well as newer models.
+        # Older models need function calling; supported models enforce the JSON schema natively.
+        native_schema = bool((self.llm.profile or {}).get("structured_output"))
         structured = self.llm.with_structured_output(
-            schema, method="function_calling", include_raw=True,
+            schema, method="json_schema" if native_schema else "function_calling",
+            include_raw=True, **({"strict": True} if native_schema else {}),
         )
         result = await structured.ainvoke(self.build_messages(system_prompt, user_message))
         if result.get("parsing_error") is not None:

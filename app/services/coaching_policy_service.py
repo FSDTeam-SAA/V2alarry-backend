@@ -51,10 +51,30 @@ class CoachingPolicyService:
             }
         )
 
-        if client_response in cls._DISCOVERY_REOPENING_RESPONSES:
+        possibly_unhelpful = (normalized_state.interaction_assessment is not None
+                              and normalized_state.interaction_assessment.usefulness == "possibly_unhelpful")
+        earned_teaching = (
+            normalized_state.next_coaching_move == "teach_selectively"
+            and normalized_state.last_coaching_move != "teach_selectively"
+            and "knowledge_gap_observed" in transition_basis
+            and bool(normalized_state.reported_facts or normalized_state.observations)
+        )
+        if possibly_unhelpful and earned_teaching and client_response not in {"not_ready", "declined"}:
+            # A specific explanation can repair a question that missed the client's need.
+            return cls._downgrade(
+                normalized_state, stage="discovery", move="teach_selectively",
+                unknowns=cls._with_unknowns(unknowns, "tested_understanding"),
+                transition_basis="client_feedback_reopened_discovery",
+                discard_transition_basis=("tested_understanding",),
+            )
+        if (client_response in cls._DISCOVERY_REOPENING_RESPONSES
+                and not (possibly_unhelpful and client_response in {"refined", "new_evidence"})):
             move: CoachingMove = (normalized_state.next_coaching_move
                                   if normalized_state.next_coaching_move in cls._DISCOVERY_MOVES else "clarify")
             discarded_basis: tuple[TransitionBasis, ...] = ()
+            if (client_response in {"refined", "new_evidence", "corrected"}
+                    and earned_teaching):
+                move = "teach_selectively"
             if client_response in {"refined", "corrected", "new_evidence"}:
                 unknowns = cls._with_unknowns(unknowns, "tested_understanding")
                 discarded_basis = ("tested_understanding",)
@@ -70,8 +90,7 @@ class CoachingPolicyService:
                 discard_transition_basis=discarded_basis,
             )
 
-        if (normalized_state.interaction_assessment
-                and normalized_state.interaction_assessment.usefulness == "possibly_unhelpful"):
+        if possibly_unhelpful:
             move = (normalized_state.next_coaching_move
                     if normalized_state.next_coaching_move in {"shift_focus", "explore_desired_help", "test_understanding"}
                     else "test_understanding")
@@ -81,6 +100,12 @@ class CoachingPolicyService:
                 transition_basis="client_feedback_reopened_discovery",
                 discard_transition_basis=("tested_understanding",),
             )
+
+        if (normalized_state.interaction_assessment
+                and normalized_state.interaction_assessment.usefulness == "unknown"
+                and normalized_state.next_coaching_move == "clarify"
+                and normalized_state.client_generation != "productive"):
+            normalized_state = normalized_state.model_copy(update={"next_coaching_move": "test_understanding"})
 
         has_grounded_evidence = bool(
             normalized_state.reported_facts or normalized_state.observations
@@ -269,6 +294,12 @@ class CoachingPolicyService:
                 "approach. Thank the leader, update the working understanding, and reopen "
                 "discovery with one precise question."
             )
+            if decision.next_coaching_move == "teach_selectively":
+                feedback_guidance = (
+                    " Acknowledge the correction without defending the prior approach. "
+                    "The client's specific request and demonstrated knowledge gap earn "
+                    "one concise explanation; then return ownership to their application."
+                )
         elif decision.client_response_to_last_move in {"refined", "new_evidence"}:
             feedback_guidance = (
                 " Treat the leader's update as new evidence. Revise the working "
@@ -288,6 +319,13 @@ class CoachingPolicyService:
                 " The usefulness of Jess's last direction is uncertain. Check tentatively "
                 "what would help now or invite correction; do not label the client disengaged "
                 "or interpret acknowledgment as agreement or commitment."
+            )
+        elif (decision.interaction_assessment
+                and decision.interaction_assessment.usefulness == "unknown"):
+            feedback_guidance += (
+                " It is uncertain whether the last invitation helped. If checking understanding, "
+                "briefly invite the client to say what would help now; do not insist on the prior trail "
+                "or label uncertainty as disengagement."
             )
 
         return (
