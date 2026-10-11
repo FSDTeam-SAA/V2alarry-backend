@@ -8,6 +8,11 @@ from app.schemas.coaching import (
 
 
 class CoachingPolicyService:
+    _DISCOVERY_MOVES = {
+        "reflect", "clarify", "separate_observation_from_interpretation",
+        "explore_desired_help", "explore_readiness", "deepen", "shift_focus",
+        "challenge_tentatively", "test_understanding",
+    }
     """Keeps coaching moves proportionate to the evidence in the working state."""
 
     _DISCOVERY_BLOCKING_UNKNOWNS = frozenset(
@@ -47,7 +52,8 @@ class CoachingPolicyService:
         )
 
         if client_response in cls._DISCOVERY_REOPENING_RESPONSES:
-            move: CoachingMove = "clarify"
+            move: CoachingMove = (normalized_state.next_coaching_move
+                                  if normalized_state.next_coaching_move in cls._DISCOVERY_MOVES else "clarify")
             discarded_basis: tuple[TransitionBasis, ...] = ()
             if client_response in {"refined", "corrected", "new_evidence"}:
                 unknowns = cls._with_unknowns(unknowns, "tested_understanding")
@@ -62,6 +68,18 @@ class CoachingPolicyService:
                 unknowns=unknowns,
                 transition_basis="client_feedback_reopened_discovery",
                 discard_transition_basis=discarded_basis,
+            )
+
+        if (normalized_state.interaction_assessment
+                and normalized_state.interaction_assessment.usefulness == "possibly_unhelpful"):
+            move = (normalized_state.next_coaching_move
+                    if normalized_state.next_coaching_move in {"shift_focus", "explore_desired_help", "test_understanding"}
+                    else "test_understanding")
+            return cls._downgrade(
+                normalized_state, stage="discovery", move=move,
+                unknowns=cls._with_unknowns(unknowns, "tested_understanding"),
+                transition_basis="client_feedback_reopened_discovery",
+                discard_transition_basis=("tested_understanding",),
             )
 
         has_grounded_evidence = bool(
@@ -164,6 +182,14 @@ class CoachingPolicyService:
                 unknowns=unknowns,
             )
 
+        allowed = cls._DISCOVERY_MOVES | {"teach_selectively"}
+        if normalized_state.coaching_stage in {"possibilities", "action"}:
+            allowed.add("explore_options")
+        if normalized_state.coaching_stage == "action":
+            allowed |= {"develop_experiment", "consolidate_commitment"}
+        if normalized_state.next_coaching_move not in allowed:
+            return cls._downgrade(normalized_state, stage=normalized_state.coaching_stage,
+                                  move="clarify", unknowns=unknowns)
         return normalized_state
 
     @classmethod
@@ -199,6 +225,7 @@ class CoachingPolicyService:
             "unless the permitted next move is teach selectively."
         )
         if decision.next_coaching_move == "teach_selectively":
+            guidance = "Address only the specific demonstrated knowledge gap; do not choose the leader's solution."
             knowledge_guidance = (
                 "A demonstrated knowledge gap permits one concise, relevant framework "
                 "or distinction. Return immediately to the leader's application and test "
@@ -255,10 +282,24 @@ class CoachingPolicyService:
                 "supports it."
             )
 
+        if (decision.interaction_assessment
+                and decision.interaction_assessment.usefulness == "possibly_unhelpful"):
+            feedback_guidance += (
+                " The usefulness of Jess's last direction is uncertain. Check tentatively "
+                "what would help now or invite correction; do not label the client disengaged "
+                "or interpret acknowledgment as agreement or commitment."
+            )
+
         return (
             f"Current coaching stage: {decision.coaching_stage}. "
             f"Permitted next move: {move}. {guidance} {knowledge_guidance}"
             f"{move_guidance}{generation_guidance}{feedback_guidance}"
+            " Help the client see more clearly and discover their own available choices. "
+            "Attend to role, relationship, authority, risk, prior attempts, and agency when relevant. "
+            "Do not assume an ambitious goal implies a broken process. A question must not "
+            "smuggle in a suggested solution. Reflect only when it builds trust or reveals "
+            "a meaningful distinction; avoid repetitive paraphrases and lists of questions. "
+            "Select one useful invitation and leave room for the client's own thinking."
         )
 
     @classmethod

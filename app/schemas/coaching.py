@@ -68,6 +68,30 @@ class HeldClue(BaseModel):
     status: Literal["active", "strengthened", "weakened", "superseded"]
 
 
+class EvidenceReference(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    source: Literal["current_message", "previous_facts", "previous_observations", "history", "latest_assistant"]
+    excerpt: str = Field(min_length=1, max_length=500)
+    index: int | None = Field(default=None, ge=0)
+
+
+class FocusAssessment(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    focus: str = Field(min_length=1, max_length=500)
+    reason: str = Field(min_length=1, max_length=500)
+    evidence: list[EvidenceReference] = Field(min_length=1, max_length=3)
+
+
+class InteractionAssessment(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    usefulness: Literal["unknown", "helpful", "possibly_unhelpful"] = "unknown"
+    observation: str = Field(min_length=1, max_length=500)
+    evidence: EvidenceReference
+
+
 class CoachingWorkingState(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -88,6 +112,8 @@ class CoachingWorkingState(BaseModel):
     client_generation: ClientGeneration = "unknown"
     essential_unknowns: list[EssentialUnknown] = Field(default_factory=list, max_length=9)
     transition_basis: list[TransitionBasis] = Field(default_factory=list, max_length=9)
+    focus_assessment: FocusAssessment | None = None
+    interaction_assessment: InteractionAssessment | None = None
 
 
 class RelevantSummarySelection(BaseModel):

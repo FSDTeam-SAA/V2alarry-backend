@@ -33,6 +33,12 @@ Use HARVEST -> CLASSIFY -> UPDATE -> HOLD -> ASSESS:
 - Classify the current answer level as unknown, action, feeling, role, contribution, or commitment. Deepen only when the next level would materially improve agency; shift when another held thread is more useful; challenge only as a tentative evidence-based observation.
 - Mark client_generation productive when the leader is actively producing useful language or insight. In that case prefer a minimal prompt and do not add conceptual load.
 - Teaching is permitted only when discovery has produced a specific, relevant knowledge gap. After a teaching move, return ownership and test what landed instead of continuing to teach.
+- Before selecting a move, assess significance: what does the new information change about the client, situation, and what would help this conversation? Understanding the problem enough to solve it is insufficient. The solution lives within the client; help them see clearly and discover what is available to them.
+- Consider role, relationship, trust, experience, authority, risk, prior attempts, and available agency only when relevant. Preserve who did or said what and distinguish one person from a group. An ambitious goal or strong existing performance does not imply a deficit. Do not invent a broken process or discard reported attempts because they do not fit your preferred direction.
+- For a substantive concern, provide focus_assessment: one selected focus, a brief reason it matters now, and at most three exact evidence excerpts. These are short decision summaries, not hidden reasoning. Sources are current_message, previous_facts, previous_observations, or a user entry in recent_history. Use zero-based index for list entries. Copy excerpts exactly; do not fabricate or paraphrase quotes. Do not use the coach's words as client evidence.
+- Assess interaction usefulness only against the latest_assistant_response and current client reply. If applicable, supply interaction_assessment with usefulness unknown, helpful, or possibly_unhelpful, a tentative observation, and an exact current_message excerpt. A short acknowledgment alone is not proof of agreement, readiness, disengagement, or commitment. Consider the prior invitation, ambiguity, uncertainty, and the client's own language together. No keyword or phrase automatically chooses a move.
+- If Jess's trail may be unhelpful, check usefulness, test a tentative understanding, invite desired help, or shift focus gently. Distinguish this uncertainty from explicit correction or refusal. Do not repeat advice or decide which of Jess's suggestions the client should adopt. New facts reopen discovery only when they materially change understanding, not merely because the client answered a question.
+- Preserve valid prior facts and attempts; replace only what the client corrects or supersedes. Use recent_history to recover missed evidence while respecting corrections. Never blindly merge conflicting claims. Keep assessments turn-scoped and avoid permanent client characterization.
 - Do not diagnose, invent events, infer protected traits, or make a clue permanent.
 """
 
@@ -86,6 +92,8 @@ class CoachingMemoryService:
                 "last_coaching_move": previous_state.next_coaching_move,
                 "client_response_to_last_move": "not_applicable",
                 "transition_basis": transition_basis,
+                "focus_assessment": None,
+                "interaction_assessment": None,
             }
         )
 
@@ -148,6 +156,7 @@ class CoachingMemoryService:
                 if not any((extracted.current_concern, extracted.reported_facts,
                             extracted.observations, extracted.interpretations_feelings)):
                     raise WorkingStateExtractionError("semantic_empty")
+                self.validate_assessments(extracted, request)
                 return extracted.model_copy(
                     update={"last_coaching_move": previous_state.last_coaching_move}
                 )
@@ -160,6 +169,32 @@ class CoachingMemoryService:
                     f"Previous extraction failed ({category}). Re-extract from the supplied "
                     "evidence. Preserve valid prior facts, distinguish corrections, and satisfy the schema."
                 )
+
+    @staticmethod
+    def validate_assessments(state: CoachingWorkingState, request: dict) -> None:
+        previous = request.get("previous_state", {})
+        history = request.get("recent_history", [])
+        sources = {
+            "current_message": [request.get("new_user_message", "")],
+            "latest_assistant": [request.get("latest_assistant_response") or ""],
+            "previous_facts": previous.get("reported_facts", []),
+            "previous_observations": previous.get("observations", []),
+            "history": [entry.get("content", "") if entry.get("role") == "user" else "" for entry in history],
+        }
+        references = list(state.focus_assessment.evidence) if state.focus_assessment else []
+        if state.focus_assessment and any(ref.source == "latest_assistant" for ref in references):
+            raise WorkingStateExtractionError("unsupported_evidence")
+        if state.interaction_assessment:
+            ref = state.interaction_assessment.evidence
+            if ref.source != "current_message" or not request.get("latest_assistant_response"):
+                raise WorkingStateExtractionError("unsupported_evidence")
+            references.append(ref)
+        for ref in references:
+            corpus = sources[ref.source]
+            if ref.index is not None:
+                corpus = corpus[ref.index:ref.index + 1]
+            if not any(ref.excerpt in text for text in corpus):
+                raise WorkingStateExtractionError("unsupported_evidence")
 
     @classmethod
     def conservative_state(cls, previous_state: CoachingWorkingState, user_message: str) -> CoachingWorkingState:
@@ -183,7 +218,9 @@ class CoachingMemoryService:
             "previous_summary": (
                 previous_summary.model_dump() if previous_summary else None
             ),
-            "working_state": working_state.model_dump(),
+            "working_state": working_state.model_dump(exclude={
+                "focus_assessment", "interaction_assessment", "possible_anchors", "held_clues",
+            }),
             "latest_turn": {
                 "leader": user_message,
                 "coach": assistant_response,
