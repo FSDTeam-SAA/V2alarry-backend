@@ -1,7 +1,8 @@
 import json
+import asyncio
 from typing import TypeVar
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from app.core.llm import LLMService
 from app.schemas.coaching import (
@@ -46,6 +47,12 @@ Return only a JSON object matching the requested schema. Treat the new message a
 """
 
 SchemaType = TypeVar("SchemaType", bound=BaseModel)
+
+
+class WorkingStateExtractionError(Exception):
+    def __init__(self, category: str):
+        self.category = category
+        super().__init__(f"Working-state extraction failed: {category}")
 
 
 class CoachingMemoryService:
@@ -114,6 +121,7 @@ class CoachingMemoryService:
         user_message: str,
         latest_assistant_response: str | None = None,
         relevant_summaries: list[CoachingSummaryData] | None = None,
+        history: list[dict] | None = None,
     ) -> CoachingWorkingState:
         previous_state = self.prepare_state_for_turn(previous_state)
         request = {
@@ -125,15 +133,42 @@ class CoachingMemoryService:
                 for summary in relevant_summaries or []
             ],
             "new_user_message": user_message,
+            "recent_history": (history or [])[-10:],
         }
-        raw = await self.llm_service.generate(
-            system_prompt=WORKING_STATE_PROMPT,
-            user_message=json.dumps(request),
-        )
-        extracted = self._parse_json(raw, CoachingWorkingState)
-        return extracted.model_copy(
-            update={"last_coaching_move": previous_state.last_coaching_move}
-        )
+        for attempt in range(2):
+            try:
+                raw = await asyncio.wait_for(self.llm_service.generate(
+                    system_prompt=WORKING_STATE_PROMPT,
+                    user_message=json.dumps(request),
+                ), timeout=30)
+            except Exception as exc:
+                raise WorkingStateExtractionError("provider") from exc
+            try:
+                extracted = self._parse_json(raw, CoachingWorkingState)
+                if not any((extracted.current_concern, extracted.reported_facts,
+                            extracted.observations, extracted.interpretations_feelings)):
+                    raise WorkingStateExtractionError("semantic_empty")
+                return extracted.model_copy(
+                    update={"last_coaching_move": previous_state.last_coaching_move}
+                )
+            except (json.JSONDecodeError, ValidationError, WorkingStateExtractionError) as exc:
+                category = (exc.category if isinstance(exc, WorkingStateExtractionError)
+                            else "schema" if isinstance(exc, ValidationError) else "json")
+                if attempt == 1:
+                    raise WorkingStateExtractionError(category) from exc
+                request["recovery"] = (
+                    f"Previous extraction failed ({category}). Re-extract from the supplied "
+                    "evidence. Preserve valid prior facts, distinguish corrections, and satisfy the schema."
+                )
+
+    @classmethod
+    def conservative_state(cls, previous_state: CoachingWorkingState, user_message: str) -> CoachingWorkingState:
+        prepared = cls.prepare_state_for_turn(previous_state)
+        return prepared.model_copy(update={
+            "current_concern": prepared.current_concern or user_message[:2000],
+            "coaching_stage": "discovery", "next_coaching_move": "clarify",
+            "transition_basis": [], "essential_unknowns": ["tested_understanding", "desired_help"],
+        })
 
     async def refresh_summary(
         self,

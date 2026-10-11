@@ -265,7 +265,7 @@ class CoachingMemoryContractTests(unittest.TestCase):
         class _StateExtractor:
             async def generate(self, **kwargs):
                 self.request = kwargs["user_message"]
-                return CoachingWorkingState().model_dump_json()
+                return CoachingWorkingState(current_concern="Not comfortable with the proposed meeting").model_dump_json()
 
         extractor = _StateExtractor()
         service = CoachingMemoryService(extractor)
@@ -456,10 +456,11 @@ class CoachingMemoryWorkflowTests(unittest.IsolatedAsyncioTestCase):
             await nodes.retrieve_data(state)
 
         memory_service.update_working_state.assert_awaited_once_with(
-            previous_state=CoachingWorkingState(last_coaching_move="clarify"),
+            previous_state=CoachingWorkingState(),
             user_message="Honestly, I would not feel comfortable yet doing that.",
             latest_assistant_response="Would you schedule a meeting?",
             relevant_summaries=[],
+            history=[{"role": "assistant", "content": "Would you schedule a meeting?"}],
         )
 
 

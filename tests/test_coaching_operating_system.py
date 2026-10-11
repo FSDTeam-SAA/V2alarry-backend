@@ -444,10 +444,11 @@ class CoachingRetrievalGateWorkflowTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("Hiring", result["coaching_context"])
         self.assertNotIn("Budgeting", result["coaching_context"])
         memory.update_working_state.assert_awaited_once_with(
-            previous_state=CoachingWorkingState(last_coaching_move="clarify"),
+            previous_state=CoachingWorkingState(),
             user_message="I need help delegating code reviews.",
             latest_assistant_response=None,
             relevant_summaries=[relevant],
+            history=[],
         )
 
     async def test_retrieval_gate_failure_injects_no_cross_session_cce(self):

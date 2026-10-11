@@ -7,7 +7,7 @@ from app.core.llm import LLMService
 from app.core.config import settings
 from app.core.cache import cache_get, cache_set, make_cache_key
 from app.schemas.coaching import CoachingSummaryData, CoachingWorkingState
-from app.services.coaching_memory_service import CoachingMemoryService
+from app.services.coaching_memory_service import CoachingMemoryService, WorkingStateExtractionError
 from app.services.coaching_policy_service import CoachingPolicyService
 from app.services.document_service import DocumentService
 import json
@@ -131,8 +131,6 @@ class WorkflowNodes:
                 state["metadata"]["cce_retrieval_status"] = "empty"
             state["metadata"]["cce_retrieved"] = len(relevant_summaries)
 
-        previous_state = CoachingMemoryService.prepare_state_for_turn(previous_state)
-
         memory_service = getattr(self, "coaching_memory_service", None)
         if memory_service:
             try:
@@ -149,11 +147,16 @@ class WorkflowNodes:
                     user_message=message,
                     latest_assistant_response=latest_assistant_response,
                     relevant_summaries=relevant_summaries,
+                    history=user_history,
                 )
                 state["metadata"]["working_state_status"] = "updated"
-            except Exception:
+            except Exception as exc:
                 logger.warning("Working-state extraction failed for user %s", user_id)
-                state["metadata"]["working_state_status"] = "retained"
+                state["metadata"]["working_state_status"] = "conservative_fallback"
+                state["extraction_failure"] = (exc.category if isinstance(exc, WorkingStateExtractionError) else "unexpected")
+                previous_state = CoachingMemoryService.conservative_state(previous_state, message)
+        else:
+            previous_state = CoachingMemoryService.conservative_state(previous_state, message)
 
         state["working_state"] = previous_state.model_dump()
         state["source_turn_count"] = source_turn_count + 1
@@ -195,6 +198,7 @@ class WorkflowNodes:
             "enforced_stage": decision.coaching_stage,
             "enforced_move": decision.next_coaching_move,
             "source_turn_count": state.get("source_turn_count", 0),
+            "extraction_failure": state.get("extraction_failure"),
         }
         state["coaching_context"] = self._build_coaching_context(
             relevant_summaries=state.get("retained_summaries", []),
