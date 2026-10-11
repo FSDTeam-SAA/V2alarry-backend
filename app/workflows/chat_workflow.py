@@ -12,6 +12,7 @@ from app.services.coaching_policy_service import CoachingPolicyService
 from app.services.document_service import DocumentService
 import json
 import logging
+import hashlib
 
 
 logger = logging.getLogger(__name__)
@@ -31,6 +32,7 @@ class ChatState(TypedDict):
     source_turn_count: int
     response: str
     metadata: Dict[str, Any]
+    decision_trace: Dict[str, Any]
 
 
 LEADERSHIP_COACH_SYSTEM_PROMPT = """You are Jess, an AI leadership coaching experience.
@@ -183,6 +185,17 @@ class WorkflowNodes:
         state["working_state"] = decision.model_dump()
         state["metadata"]["coaching_stage"] = decision.coaching_stage
         state["metadata"]["next_coaching_move"] = decision.next_coaching_move
+        state["decision_trace"] = {
+            "version": "calibration-2",
+            "model": settings.LLM_MODEL,
+            "system_prompt_hash": hashlib.sha256(LEADERSHIP_COACH_SYSTEM_PROMPT.encode()).hexdigest()[:16],
+            "extraction_status": state["metadata"].get("working_state_status", "unavailable"),
+            "proposed_stage": working_state.coaching_stage,
+            "proposed_move": working_state.next_coaching_move,
+            "enforced_stage": decision.coaching_stage,
+            "enforced_move": decision.next_coaching_move,
+            "source_turn_count": state.get("source_turn_count", 0),
+        }
         state["coaching_context"] = self._build_coaching_context(
             relevant_summaries=state.get("retained_summaries", []),
             working_state=decision,
@@ -337,7 +350,7 @@ class WorkflowNodes:
             conversation_id=conversation_id,
             user_message=message,
             assistant_response=response,
-            metadata=metadata,
+            metadata={**metadata, "coaching_trace": state.get("decision_trace", {})},
             working_state=state.get("working_state"),
             source_turn_count=state.get("source_turn_count", 0),
         )
