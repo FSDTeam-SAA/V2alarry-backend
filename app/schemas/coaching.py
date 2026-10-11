@@ -68,7 +68,35 @@ class HeldClue(BaseModel):
     status: Literal["active", "strengthened", "weakened", "superseded"]
 
 
-class CoachingWorkingState(BaseModel):
+class EvidenceReference(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    source: Literal["current_message", "previous_facts", "previous_observations", "history"]
+    excerpt: str = Field(min_length=1, max_length=500)
+    index: int | None = Field(default=None, ge=0)
+
+
+class FocusAssessment(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    focus: str = Field(min_length=1, max_length=500)
+    reason: str = Field(min_length=1, max_length=500)
+    evidence: list[EvidenceReference] = Field(min_length=1, max_length=3)
+
+
+class InteractionEvidenceReference(EvidenceReference):
+    source: Literal["current_message"]
+
+
+class InteractionAssessment(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    usefulness: Literal["unknown", "helpful", "possibly_unhelpful"] = "unknown"
+    observation: str = Field(min_length=1, max_length=500)
+    evidence: InteractionEvidenceReference
+
+
+class CoachingEvidenceState(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     current_concern: str | None = Field(default=None, max_length=2000)
@@ -80,6 +108,9 @@ class CoachingWorkingState(BaseModel):
     held_clues: list[HeldClue] = Field(default_factory=list, max_length=10)
     unresolved_items: list[str] = Field(default_factory=list, max_length=20)
     emerging_agency: list[str] = Field(default_factory=list, max_length=20)
+
+
+class CoachingWorkingState(CoachingEvidenceState):
     coaching_stage: CoachingStage = "discovery"
     next_coaching_move: CoachingMove = "clarify"
     last_coaching_move: CoachingMove | None = None
@@ -88,12 +119,49 @@ class CoachingWorkingState(BaseModel):
     client_generation: ClientGeneration = "unknown"
     essential_unknowns: list[EssentialUnknown] = Field(default_factory=list, max_length=9)
     transition_basis: list[TransitionBasis] = Field(default_factory=list, max_length=9)
+    focus_assessment: FocusAssessment | None = None
+    interaction_assessment: InteractionAssessment | None = None
 
 
 class RelevantSummarySelection(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     relevant_indices: list[int] = Field(default_factory=list, max_length=3)
+
+
+class FocusSelection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    focus: str = Field(min_length=1, max_length=500)
+    reason: str = Field(min_length=1, max_length=500)
+    evidence_ids: list[str] = Field(min_length=1, max_length=3)
+
+
+class InteractionSelection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    usefulness: Literal["unknown", "helpful", "possibly_unhelpful"]
+    observation: str = Field(min_length=1, max_length=500)
+
+
+class CoachingTurnAssessment(BaseModel):
+    """Bounded, evidence-grounded judgment made after factual state extraction."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    focus_assessment: FocusSelection
+    interaction_assessment: InteractionSelection | None = Field(...)
+    coaching_stage: CoachingStage
+    next_coaching_move: CoachingMove
+    client_response_to_last_move: ClientResponseToLastMove
+    answer_level: AnswerLevel = "unknown"
+    essential_unknowns: list[EssentialUnknown] = Field(..., max_length=9)
+    transition_basis: list[TransitionBasis] = Field(..., max_length=9)
+    client_generation: ClientGeneration
+    knowledge_gap_observed: bool = Field(description="Specific relevant knowledge the client lacks; not uncertainty about their feelings, goals, or situation")
+    user_owned_outcome: bool = Field(description="An outcome or experiment the client chooses in their own words; not acceptance of Jess's suggestion")
+    tested_understanding: bool = Field(description="The client confirms a useful current understanding, or a prior confirmed understanding remains valid; not merely acknowledgment")
+    transition_evidence_ids: list[str] = Field(max_length=3)
 
 
 class CoachingSummaryData(BaseModel):

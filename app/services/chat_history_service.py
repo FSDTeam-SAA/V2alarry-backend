@@ -1,4 +1,4 @@
-from sqlalchemy import select, func
+from sqlalchemy import select, func, case
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.database import AsyncSessionLocal
 from app.models.conversation import Conversation
@@ -9,6 +9,7 @@ from app.schemas.coaching import CoachingSummaryData
 from typing import List, Dict, Any, Optional
 import uuid
 from functools import lru_cache
+from datetime import datetime, timedelta, timezone
 
 
 class ChatHistoryService:
@@ -102,19 +103,34 @@ class ChatHistoryService:
             conv_uuid = conv_obj.id
             conv_obj.updated_at = func.now()
 
+            user_message_id, assistant_message_id = uuid.uuid4(), uuid.uuid4()
+            pair_metadata = {
+                **(metadata or {}),
+                "turn_id": str(uuid.uuid4()),
+                "user_message_id": str(user_message_id),
+                "assistant_message_id": str(assistant_message_id),
+                "source_turn_count": source_turn_count,
+            }
+            saved_at = datetime.now(timezone.utc)
+
             user_msg = Message(
+                id=user_message_id,
                 conversation_id=conv_uuid,
                 role="user",
                 content=user_message,
-                metadata=metadata or {},
+                created_at=saved_at,
+                doc_metadata=pair_metadata,
             )
             db.add(user_msg)
 
             assistant_msg = Message(
+                id=assistant_message_id,
                 conversation_id=conv_uuid,
                 role="assistant",
                 content=assistant_response,
-                metadata={
+                created_at=saved_at + timedelta(microseconds=1),
+                doc_metadata={
+                    **pair_metadata,
                     "retrieved_docs": (metadata or {}).get("docs_retrieved", 0),
                     "context_length": (metadata or {}).get("context_length", 0),
                 },
@@ -129,6 +145,9 @@ class ChatHistoryService:
                 conv_obj.title = title
 
             if working_state is not None:
+                # Turn-scoped assessments live in the linked trace, not durable client state.
+                durable_state = {key: value for key, value in working_state.items()
+                                 if key not in {"focus_assessment", "interaction_assessment"}}
                 state_result = await db.execute(
                     select(CoachingWorkingState).where(
                         CoachingWorkingState.conversation_id == conv_uuid
@@ -136,13 +155,13 @@ class ChatHistoryService:
                 )
                 state_record = state_result.scalar_one_or_none()
                 if state_record:
-                    state_record.state = working_state
+                    state_record.state = durable_state
                     state_record.source_turn_count = source_turn_count
                 else:
                     db.add(
                         CoachingWorkingState(
                             conversation_id=conv_uuid,
-                            state=working_state,
+                            state=durable_state,
                             source_turn_count=source_turn_count,
                         )
                     )
@@ -309,7 +328,7 @@ class ChatHistoryService:
                     Message.conversation_id == parsed_conversation_id,
                     Conversation.user_id == int(user_id),
                 )
-                .order_by(Message.created_at.asc())
+                .order_by(Message.created_at.asc(), case((Message.role == "user", 0), else_=1).asc(), Message.id.asc())
             )
             messages = result.scalars().all()
 
@@ -344,7 +363,7 @@ class ChatHistoryService:
                     Message.conversation_id == parsed_conversation_id,
                     Conversation.user_id == int(user_id),
                 )
-                .order_by(Message.created_at.desc())
+                .order_by(Message.created_at.desc(), case((Message.role == "user", 0), else_=1).desc(), Message.id.desc())
                 .limit(limit)
             )
             messages = list(result.scalars().all())

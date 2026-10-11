@@ -50,8 +50,8 @@ class Settings(BaseSettings):
 
     # LLM Settings
     OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
-    LLM_MODEL: str = "gpt-3.5-turbo"
-    LLM_TEMPERATURE: float = 0.7
+    LLM_MODEL: str = "gpt-4.1"
+    LLM_TEMPERATURE: float = 0.3
     MAX_TOKENS: int = 2048
 
     # Chat Tuning

@@ -7,11 +7,12 @@ from app.core.llm import LLMService
 from app.core.config import settings
 from app.core.cache import cache_get, cache_set, make_cache_key
 from app.schemas.coaching import CoachingSummaryData, CoachingWorkingState
-from app.services.coaching_memory_service import CoachingMemoryService
+from app.services.coaching_memory_service import CoachingMemoryService, WorkingStateExtractionError, EVIDENCE_EXTRACTION_PROMPT, TURN_ASSESSMENT_PROMPT
 from app.services.coaching_policy_service import CoachingPolicyService
 from app.services.document_service import DocumentService
 import json
 import logging
+import hashlib
 
 
 logger = logging.getLogger(__name__)
@@ -31,15 +32,19 @@ class ChatState(TypedDict):
     source_turn_count: int
     response: str
     metadata: Dict[str, Any]
+    decision_trace: Dict[str, Any]
+    previous_working_state: Dict[str, Any]
+    extraction_failure: Optional[str]
+    assessment_failure: Optional[str]
 
 
 LEADERSHIP_COACH_SYSTEM_PROMPT = """You are Jess, an AI leadership coaching experience.
 
-Your purpose is to help leaders think clearly and take practical action in situations involving feedback, delegation, conflict, trust, accountability, decision-making, difficult conversations, and leading through change.
+Your purpose is to help leaders understand themselves and their situation, see more clearly, discover what is available to them, and make their own useful choices in situations involving feedback, delegation, conflict, trust, accountability, decision-making, difficult conversations, and leading through change. Remember: the solution lives within the client. Build trust while learning what matters most for this conversation. Practical action is useful when it grows from the client's clarity and agency.
 
 Coaching approach:
 1. Start with a brief, accurate reflection of the leader's situation when it is useful.
-2. The server-provided coaching policy decides whether an essential detail is missing and which move is permitted. When it permits discovery, ask one focused question before offering a plan. Do not turn every response into a questionnaire.
+2. The server-provided coaching policy decides whether an essential detail is missing and which move is permitted. When it permits discovery, use one focused question or invitation that helps the client see more clearly. Do not turn every response into a questionnaire or disguise advice as a question.
 3. Only when the server-provided coaching policy permits it, offer practical options, tradeoffs, a useful framework, language the leader can adapt, and a practical next step.
 4. Keep the leader in control of decisions. Do not diagnose people, assign motives, manipulate others, or present one option as guaranteed.
 5. Be warm, direct, concise, and specific. Avoid generic encouragement, management jargon, and invented facts.
@@ -50,6 +55,7 @@ Coaching approach:
 10. When the leader is productively generating insight or commitment language, reduce coach content and use a minimal prompt so they can continue in their own words.
 11. Teach only when discovery has exposed a specific, relevant knowledge gap. Keep teaching concise, connect it to the leader's real situation, then return ownership and test what landed.
 12. When the leader corrects Jess or describes harm from a prior intervention, receive the impact without defensiveness, acknowledge and repair the miss, update the working picture, and re-enter discovery.
+Consider why new information matters for this client: role, relationships, trust, authority, experience, risk, prior attempts, and available agency. An ambitious goal does not imply something is broken. Treat possible loss of usefulness tentatively; check or shift the conversation without labeling the client. Reflect selectively, with accurate specifics, rather than repeating every answer.
 
 Knowledge and sources:
 13. Prefer the curated leadership knowledge sources provided with the request for frameworks and factual claims. Cite a source as [Source N: filename] only when you use that source.
@@ -75,6 +81,9 @@ class WorkflowNodes:
         user_id = state.get("user_id")
         message = state.get("message")
         conversation_id = state.get("conversation_id")
+
+        if conversation_id and hasattr(self.chat_history_service, "get_or_create_conversation"):
+            await self.chat_history_service.get_or_create_conversation(user_id=user_id, conversation_id=conversation_id)
 
         user_history = await self._fetch_history(user_id, conversation_id)
         state["user_history"] = user_history
@@ -129,8 +138,7 @@ class WorkflowNodes:
                 state["metadata"]["cce_retrieval_status"] = "empty"
             state["metadata"]["cce_retrieved"] = len(relevant_summaries)
 
-        previous_state = CoachingMemoryService.prepare_state_for_turn(previous_state)
-
+        state["previous_working_state"] = previous_state.model_dump()
         memory_service = getattr(self, "coaching_memory_service", None)
         if memory_service:
             try:
@@ -147,11 +155,16 @@ class WorkflowNodes:
                     user_message=message,
                     latest_assistant_response=latest_assistant_response,
                     relevant_summaries=relevant_summaries,
+                    history=user_history,
                 )
                 state["metadata"]["working_state_status"] = "updated"
-            except Exception:
+            except Exception as exc:
                 logger.warning("Working-state extraction failed for user %s", user_id)
-                state["metadata"]["working_state_status"] = "retained"
+                state["metadata"]["working_state_status"] = "conservative_fallback"
+                state["extraction_failure"] = (exc.category if isinstance(exc, WorkingStateExtractionError) else "unexpected")
+                previous_state = CoachingMemoryService.conservative_state(previous_state, message)
+        else:
+            previous_state = CoachingMemoryService.conservative_state(previous_state, message)
 
         state["working_state"] = previous_state.model_dump()
         state["source_turn_count"] = source_turn_count + 1
@@ -178,11 +191,52 @@ class WorkflowNodes:
         working_state = CoachingWorkingState.model_validate(
             state.get("working_state", {})
         )
+        memory_service = getattr(self, "coaching_memory_service", None)
+        if memory_service and hasattr(memory_service, "assess_turn") and state["metadata"].get("working_state_status") == "updated":
+            try:
+                history = state.get("user_history", [])
+                working_state = await memory_service.assess_turn(
+                    working_state=working_state, user_message=state["message"], history=history,
+                    latest_assistant_response=next((entry["content"] for entry in reversed(history) if entry.get("role") == "assistant"), None),
+                    previous_state=CoachingWorkingState.model_validate(state.get("previous_working_state", {})),
+                )
+                state["metadata"]["assessment_status"] = "updated"
+            except Exception as exc:
+                logger.warning("Turn assessment failed for user %s", state.get("user_id"))
+                state["metadata"]["assessment_status"] = "conservative_fallback"
+                state["assessment_failure"] = exc.category if isinstance(exc, WorkingStateExtractionError) else "unexpected"
+                working_state = CoachingMemoryService.conservative_state(working_state, state["message"]).model_copy(
+                    update={"last_coaching_move": working_state.last_coaching_move},
+                )
         decision = CoachingPolicyService.enforce(working_state)
 
         state["working_state"] = decision.model_dump()
         state["metadata"]["coaching_stage"] = decision.coaching_stage
         state["metadata"]["next_coaching_move"] = decision.next_coaching_move
+        state["decision_trace"] = {
+            "version": "calibration-2",
+            "model": settings.LLM_MODEL,
+            "system_prompt_hash": hashlib.sha256(LEADERSHIP_COACH_SYSTEM_PROMPT.encode()).hexdigest()[:16],
+            "working_state_prompt_hash": hashlib.sha256(EVIDENCE_EXTRACTION_PROMPT.encode()).hexdigest()[:16],
+            "assessment_prompt_hash": hashlib.sha256(TURN_ASSESSMENT_PROMPT.encode()).hexdigest()[:16],
+            "assessment_status": state["metadata"].get("assessment_status", "unavailable"),
+            "response_policy_hash": hashlib.sha256(CoachingPolicyService.build_response_policy(decision).encode()).hexdigest()[:16],
+            "extraction_status": state["metadata"].get("working_state_status", "unavailable"),
+            "proposed_stage": working_state.coaching_stage,
+            "proposed_move": working_state.next_coaching_move,
+            "enforced_stage": decision.coaching_stage,
+            "enforced_move": decision.next_coaching_move,
+            "source_turn_count": state.get("source_turn_count", 0),
+            "extraction_failure": state.get("extraction_failure"),
+            "assessment_failure": state.get("assessment_failure"),
+            "essential_unknowns": decision.essential_unknowns,
+            "transition_basis": decision.transition_basis,
+            "client_feedback": decision.client_response_to_last_move,
+            "client_generation": decision.client_generation,
+            "answer_level": decision.answer_level,
+            "focus_assessment": decision.focus_assessment.model_dump() if decision.focus_assessment else None,
+            "interaction_assessment": decision.interaction_assessment.model_dump() if decision.interaction_assessment else None,
+        }
         state["coaching_context"] = self._build_coaching_context(
             relevant_summaries=state.get("retained_summaries", []),
             working_state=decision,
@@ -337,7 +391,7 @@ class WorkflowNodes:
             conversation_id=conversation_id,
             user_message=message,
             assistant_response=response,
-            metadata=metadata,
+            metadata={**metadata, "coaching_trace": state.get("decision_trace", {})},
             working_state=state.get("working_state"),
             source_turn_count=state.get("source_turn_count", 0),
         )
