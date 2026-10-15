@@ -96,6 +96,16 @@ class InteractionAssessment(BaseModel):
     evidence: InteractionEvidenceReference
 
 
+class InquiryAssessment(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    progress: Literal["unknown", "advancing", "stalled"]
+    reason: str = Field(min_length=1, max_length=500)
+    client_requested_pause: bool = Field(
+        description="The client actually asks to pause or end the conversation; not an answer denying knowledge or declining one question"
+    )
+
+
 class CoachingEvidenceState(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -121,6 +131,7 @@ class CoachingWorkingState(CoachingEvidenceState):
     transition_basis: list[TransitionBasis] = Field(default_factory=list, max_length=9)
     focus_assessment: FocusAssessment | None = None
     interaction_assessment: InteractionAssessment | None = None
+    inquiry_assessment: InquiryAssessment | None = None
 
 
 class RelevantSummarySelection(BaseModel):
@@ -151,6 +162,7 @@ class CoachingTurnAssessment(BaseModel):
 
     focus_assessment: FocusSelection
     interaction_assessment: InteractionSelection | None = Field(...)
+    inquiry_assessment: InquiryAssessment | None = None
     coaching_stage: CoachingStage
     next_coaching_move: CoachingMove
     client_response_to_last_move: ClientResponseToLastMove

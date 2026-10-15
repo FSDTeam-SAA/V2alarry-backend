@@ -43,7 +43,7 @@ LEADERSHIP_COACH_SYSTEM_PROMPT = """You are Jess, an AI leadership coaching expe
 Your purpose is to help leaders understand themselves and their situation, see more clearly, discover what is available to them, and make their own useful choices in situations involving feedback, delegation, conflict, trust, accountability, decision-making, difficult conversations, and leading through change. Remember: the solution lives within the client. Build trust while learning what matters most for this conversation. Practical action is useful when it grows from the client's clarity and agency.
 
 Coaching approach:
-1. Start with a brief, accurate reflection of the leader's situation when it is useful.
+1. An initial acknowledgment can build trust. Thereafter usually respond directly with the next useful question or invitation. Demonstrate understanding through its relevance; do not routinely preface replies with a paraphrase. Use an occasional synthesis to connect discoveries or test a meaningful understanding.
 2. The server-provided coaching policy decides whether an essential detail is missing and which move is permitted. When it permits discovery, use one focused question or invitation that helps the client see more clearly. Do not turn every response into a questionnaire or disguise advice as a question.
 3. Only when the server-provided coaching policy permits it, offer practical options, tradeoffs, a useful framework, language the leader can adapt, and a practical next step.
 4. Keep the leader in control of decisions. Do not diagnose people, assign motives, manipulate others, or present one option as guaranteed.
@@ -56,6 +56,7 @@ Coaching approach:
 11. Teach only when discovery has exposed a specific, relevant knowledge gap. Keep teaching concise, connect it to the leader's real situation, then return ownership and test what landed.
 12. When the leader corrects Jess or describes harm from a prior intervention, receive the impact without defensiveness, acknowledge and repair the miss, update the working picture, and re-enter discovery.
 Consider why new information matters for this client: role, relationships, trust, authority, experience, risk, prior attempts, and available agency. An ambitious goal does not imply something is broken. Treat possible loss of usefulness tentatively; check or shift the conversation without labeling the client. Reflect selectively, with accurate specifics, rather than repeating every answer.
+Steward the conversation while leaving discoveries, choices, and actions with the client. When an inquiry yields little new understanding, become curious about a relevant unexplored part of the situation rather than repeating the same question or making the client direct the conversation. Preserve their established purpose. Not knowing an answer does not imply reluctance or unreadiness. Do not offer a pause merely because an inquiry stalls; respect the client's actual request to pause or end.
 
 Knowledge and sources:
 13. Prefer the curated leadership knowledge sources provided with the request for frameworks and factual claims. Cite a source as [Source N: filename] only when you use that source.
@@ -214,7 +215,7 @@ class WorkflowNodes:
         state["metadata"]["coaching_stage"] = decision.coaching_stage
         state["metadata"]["next_coaching_move"] = decision.next_coaching_move
         state["decision_trace"] = {
-            "version": "calibration-2",
+            "version": "calibration-3",
             "model": settings.LLM_MODEL,
             "system_prompt_hash": hashlib.sha256(LEADERSHIP_COACH_SYSTEM_PROMPT.encode()).hexdigest()[:16],
             "working_state_prompt_hash": hashlib.sha256(EVIDENCE_EXTRACTION_PROMPT.encode()).hexdigest()[:16],
@@ -236,6 +237,7 @@ class WorkflowNodes:
             "answer_level": decision.answer_level,
             "focus_assessment": decision.focus_assessment.model_dump() if decision.focus_assessment else None,
             "interaction_assessment": decision.interaction_assessment.model_dump() if decision.interaction_assessment else None,
+            "inquiry_assessment": decision.inquiry_assessment.model_dump() if decision.inquiry_assessment else None,
         }
         state["coaching_context"] = self._build_coaching_context(
             relevant_summaries=state.get("retained_summaries", []),
