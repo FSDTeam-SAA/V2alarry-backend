@@ -104,6 +104,10 @@ class InquiryAssessment(BaseModel):
     client_requested_pause: bool = Field(
         description="The client actually asks to pause or end the conversation; not an answer denying knowledge or declining one question"
     )
+    client_requested_teaching: bool = Field(
+        default=False,
+        description="The client explicitly asks for a specific explanation or distinction; not merely uncertainty about the situation"
+    )
 
 
 class CoachingEvidenceState(BaseModel):

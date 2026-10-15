@@ -60,6 +60,10 @@ class CoachingPolicyService:
             and bool(normalized_state.reported_facts or normalized_state.observations)
         )
         inquiry = normalized_state.inquiry_assessment
+        teaching_repairs_inquiry = earned_teaching and (
+            client_response not in {"not_ready", "declined"}
+            or bool(inquiry and inquiry.client_requested_teaching)
+        )
         if inquiry and inquiry.client_requested_pause:
             return cls._downgrade(
                 normalized_state, stage="discovery", move="explore_readiness",
@@ -67,8 +71,8 @@ class CoachingPolicyService:
             )
         if (inquiry and inquiry.progress == "stalled"
                 and normalized_state.client_generation != "productive"
-                and client_response not in {"corrected", "not_ready"}
-                and not earned_teaching
+                and client_response != "corrected"
+                and not teaching_repairs_inquiry
                 and bool(normalized_state.reported_facts or normalized_state.observations)):
             # Declining one unproductive question does not mean declining coaching.
             return cls._downgrade(
@@ -77,7 +81,9 @@ class CoachingPolicyService:
                 transition_basis="client_feedback_reopened_discovery",
                 discard_transition_basis=("tested_understanding",),
             )
-        if possibly_unhelpful and earned_teaching and client_response not in {"not_ready", "declined"}:
+        if teaching_repairs_inquiry and (
+            possibly_unhelpful or (inquiry and inquiry.progress == "stalled")
+        ):
             # A specific explanation can repair a question that missed the client's need.
             return cls._downgrade(
                 normalized_state, stage="discovery", move="teach_selectively",
@@ -346,6 +352,17 @@ class CoachingPolicyService:
                 " It is uncertain whether the last invitation helped. If checking understanding, "
                 "briefly invite the client to say what would help now; do not insist on the prior trail "
                 "or label uncertainty as disengagement."
+            )
+        if (decision.inquiry_assessment
+                and decision.inquiry_assessment.progress == "stalled"
+                and decision.next_coaching_move == "shift_focus"):
+            feedback_guidance = (
+                " The previous inquiry is stalled, not evidence that the client wants to stop. "
+                "Keep their established purpose and take responsibility for a fresh useful "
+                "direction. Explore one relevant unknown about the situation, people, relationship, "
+                "or client's experience. Do not ask again what help, outcome, or readiness they "
+                "want, or request more clues they have already said they lack. Respect a declined "
+                "topic by exploring another; do not recycle the same question or impose an action."
             )
 
         return (

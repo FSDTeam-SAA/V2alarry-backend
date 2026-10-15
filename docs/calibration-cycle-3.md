@@ -18,10 +18,12 @@ records brief decision summaries, not a complete account of internal reasoning.
 ## Plan and acceptance criteria
 
 1. Add a bounded, temporary inquiry assessment to the existing assessment call:
-   progress, a short reason, and whether the client actually requested a pause.
+   progress, a short reason, and whether the client actually requested a pause
+   or a specific explanation.
    When an inquiry stalls, policy selects `shift_focus` rather than repeating
    reflection or treating an answer to one question as refusal of coaching.
-2. Preserve explicit refusal/readiness boundaries, corrections, productive client
+2. Distinguish refusal of one direction from refusal of coaching. Preserve
+   explicit pause/readiness boundaries, corrections, productive client
    thinking, and earned teaching. Uncertain usefulness alone must not force a
    verbal summary. Keep action and evidence gates unchanged.
 3. Refine extraction, assessment, and response guidance: carry forward an
