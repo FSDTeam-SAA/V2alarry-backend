@@ -55,5 +55,30 @@ Run from `V2alarry-backend`:
 git diff --check
 ```
 
-Provider samples demonstrate observed behavior only; coaching acceptance remains
-with Larry. Validation results will be recorded here after execution.
+## Validation results
+
+- 134 backend tests passed, including 18 new stewardship regressions. Failing
+  regressions preceded the fixes, including readiness/teaching precedence and
+  repeated policy application.
+- Python compilation and diff checks passed. No installed Ruff/mypy/Pyright
+  runner is available, so no separate static lint/type check is claimed.
+- Nine real PostgreSQL/auth/HTTP persistence checks passed with deterministic
+  model doubles, then with the live configured provider for two synthetic turns.
+  JSON and SSE, ownership, private diagnostics, ordering, and continuity passed.
+  Retrieval was doubled; the disposable localhost cluster was stopped afterward.
+- The final live-model calibration completed eight synthetic conversations / 23
+  turns / 69 calls, with all extractions and assessments updated successfully.
+  Recorded decisions were stable under repeated enforcement and their response
+  policies matched. Final source hashes were verified against the evaluated files.
+- The initial candidate still misread missing information as unreadiness. A later
+  run exposed a requested-teaching precedence/idempotence conflict; an explicit,
+  evidenced teaching-request signal resolves that conflict while an actual pause
+  request still takes priority. Intermediate results are retained as failures.
+
+See the workspace [implementation report](../../tasks/calibration-cycle-3/implementation-report.md)
+and [synthetic transcripts](../../tasks/calibration-cycle-3/transcripts.md) for the
+saved-record diagnosis, matched comparison, artifacts, and limitations. The shared
+database was read only. No deployment or client-document update was performed.
+Some model replies still use mechanical transitions or bundled questions;
+provider samples demonstrate observed behavior only. Coaching acceptance remains
+with Larry.
