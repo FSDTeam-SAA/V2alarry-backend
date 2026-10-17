@@ -59,7 +59,31 @@ class CoachingPolicyService:
             and "knowledge_gap_observed" in transition_basis
             and bool(normalized_state.reported_facts or normalized_state.observations)
         )
-        if possibly_unhelpful and earned_teaching and client_response not in {"not_ready", "declined"}:
+        inquiry = normalized_state.inquiry_assessment
+        teaching_repairs_inquiry = earned_teaching and (
+            client_response not in {"not_ready", "declined"}
+            or bool(inquiry and inquiry.client_requested_teaching)
+        )
+        if inquiry and inquiry.client_requested_pause:
+            return cls._downgrade(
+                normalized_state, stage="discovery", move="explore_readiness",
+                unknowns=unknowns,
+            )
+        if (inquiry and inquiry.progress == "stalled"
+                and normalized_state.client_generation != "productive"
+                and client_response != "corrected"
+                and not teaching_repairs_inquiry
+                and bool(normalized_state.reported_facts or normalized_state.observations)):
+            # Declining one unproductive question does not mean declining coaching.
+            return cls._downgrade(
+                normalized_state, stage="discovery", move="shift_focus",
+                unknowns=cls._with_unknowns(unknowns, "tested_understanding"),
+                transition_basis="client_feedback_reopened_discovery",
+                discard_transition_basis=("tested_understanding",),
+            )
+        if teaching_repairs_inquiry and (
+            possibly_unhelpful or (inquiry and inquiry.progress == "stalled")
+        ):
             # A specific explanation can repair a question that missed the client's need.
             return cls._downgrade(
                 normalized_state, stage="discovery", move="teach_selectively",
@@ -100,12 +124,6 @@ class CoachingPolicyService:
                 transition_basis="client_feedback_reopened_discovery",
                 discard_transition_basis=("tested_understanding",),
             )
-
-        if (normalized_state.interaction_assessment
-                and normalized_state.interaction_assessment.usefulness == "unknown"
-                and normalized_state.next_coaching_move == "clarify"
-                and normalized_state.client_generation != "productive"):
-            normalized_state = normalized_state.model_copy(update={"next_coaching_move": "test_understanding"})
 
         has_grounded_evidence = bool(
             normalized_state.reported_facts or normalized_state.observations
@@ -224,8 +242,8 @@ class CoachingPolicyService:
 
         if decision.coaching_stage == "discovery":
             guidance = (
-                "Use a brief, accurate reflection when useful and one focused "
-                "question that helps the leader learn more. Do not offer advice, "
+                "Use one focused question or invitation that helps the leader learn more. "
+                "Usually begin directly with that invitation; an opening reflection is optional. Do not offer advice, "
                 "options, a script, a framework, a plan, or a recommended action."
             )
         elif decision.coaching_stage == "reflection":
@@ -256,6 +274,11 @@ class CoachingPolicyService:
                 "or distinction. Return immediately to the leader's application and test "
                 "what landed."
             )
+        if decision.inquiry_assessment and decision.inquiry_assessment.client_requested_pause:
+            guidance = (
+                "Respect the client's explicit request to pause or end. Acknowledge it briefly "
+                "without another discovery question, pressure to continue, or an action assignment."
+            )
 
         move_guidance = ""
         if decision.next_coaching_move == "deepen":
@@ -266,8 +289,10 @@ class CoachingPolicyService:
             )
         elif decision.next_coaching_move == "shift_focus":
             move_guidance = (
-                " Briefly name the shift, foreground one more useful thread, and leave "
-                "other valid threads held rather than trying to resolve all of them."
+                " Follow the selected focus into a relevant unexplored part of the situation. "
+                "Do not repeat the previous question in new words or make the client choose "
+                "the next line of inquiry. A transition is optional; ask naturally without "
+                "announcing or summarizing every shift. Hold other valid threads provisionally."
             )
         elif decision.next_coaching_move == "challenge_tentatively":
             move_guidance = (
@@ -286,7 +311,8 @@ class CoachingPolicyService:
         if decision.client_response_to_last_move in {"not_ready", "declined"}:
             feedback_guidance = (
                 " Do not repeat or repackage a declined suggestion. Acknowledge the "
-                "leader's feedback and explore readiness before proposing another action."
+                "leader's boundary. Declining a question or suggestion is not a request "
+                "to stop the conversation; do not infer unwillingness from missing information."
             )
         elif decision.client_response_to_last_move == "corrected":
             feedback_guidance = (
@@ -327,6 +353,17 @@ class CoachingPolicyService:
                 "briefly invite the client to say what would help now; do not insist on the prior trail "
                 "or label uncertainty as disengagement."
             )
+        if (decision.inquiry_assessment
+                and decision.inquiry_assessment.progress == "stalled"
+                and decision.next_coaching_move == "shift_focus"):
+            feedback_guidance = (
+                " The previous inquiry is stalled, not evidence that the client wants to stop. "
+                "Keep their established purpose and take responsibility for a fresh useful "
+                "direction. Explore one relevant unknown about the situation, people, relationship, "
+                "or client's experience. Do not ask again what help, outcome, or readiness they "
+                "want, or request more clues they have already said they lack. Respect a declined "
+                "topic by exploring another; do not recycle the same question or impose an action."
+            )
 
         return (
             f"Current coaching stage: {decision.coaching_stage}. "
@@ -336,7 +373,11 @@ class CoachingPolicyService:
             "Attend to role, relationship, authority, risk, prior attempts, and agency when relevant. "
             "Do not assume an ambitious goal implies a broken process. A question must not "
             "smuggle in a suggested solution. Reflect only when it builds trust or reveals "
-            "a meaningful distinction; avoid repetitive paraphrases and lists of questions. "
+            "a meaningful distinction, repairs a correction, or tests a useful synthesis. "
+            "Update understanding internally on every turn; do not restate the latest answer "
+            "as a routine preface. Demonstrate understanding through the relevance of the next move. "
+            "Do not offer to pause or end merely because the client is uncertain or an inquiry "
+            "stalls; respect an actual client request to stop. Avoid repetitive paraphrases and lists of questions. "
             "Select one useful invitation and leave room for the client's own thinking."
         )
 

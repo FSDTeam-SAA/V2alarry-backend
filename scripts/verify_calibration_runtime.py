@@ -65,7 +65,10 @@ async def verify(url: str, output: Path, serve_port: int = 0, live_model: bool =
                 return CoachingTurnAssessment(
                     focus_assessment={"focus": "Client's desired clarity", "reason": "Client wants to think clearly",
                         "evidence_ids": ["current_message"]},
-                    interaction_assessment=None, coaching_stage="discovery", next_coaching_move="explore_desired_help",
+                    interaction_assessment=None,
+                    inquiry_assessment={"progress": "advancing", "reason": "Client is clarifying their purpose",
+                                        "client_requested_pause": False},
+                    coaching_stage="discovery", next_coaching_move="explore_desired_help",
                     client_response_to_last_move="not_applicable", client_generation="emerging",
                     essential_unknowns=["desired_help"], transition_basis=["grounded_evidence"],
                     knowledge_gap_observed=False, user_owned_outcome=False, tested_understanding=False, transition_evidence_ids=[],
@@ -148,10 +151,12 @@ async def verify(url: str, output: Path, serve_port: int = 0, live_model: bool =
         saved = list((await db.execute(select(Message).where(Message.conversation_id == uuid_module.UUID(conversation_id)).order_by(Message.created_at))).scalars())
         assert len(saved) == 4
         for user, assistant in zip(saved[::2], saved[1::2]):
-            assert user.doc_metadata["coaching_trace"]["version"] == "calibration-2"
+            assert user.doc_metadata["coaching_trace"]["version"] == "calibration-3"
             assert user.doc_metadata["assistant_message_id"] == str(assistant.id)
             assert assistant.doc_metadata["user_message_id"] == str(user.id)
             assert user.doc_metadata["turn_id"] == assistant.doc_metadata["turn_id"]
+            if user.doc_metadata["source_turn_count"] > 1:
+                assert isinstance(user.doc_metadata["coaching_trace"]["inquiry_assessment"], dict)
             if live_model:
                 assert user.doc_metadata["coaching_trace"]["extraction_status"] == "updated"
                 assert user.doc_metadata["coaching_trace"]["assessment_status"] == "updated"
@@ -171,7 +176,7 @@ async def verify(url: str, output: Path, serve_port: int = 0, live_model: bool =
     # A new service reads persisted continuity rather than relying on an in-memory workflow.
     persisted = await ChatHistoryService().get_working_state(conversation_id=conversation_id, user_id=str(user_ids[0]))
     assert persisted.source_turn_count == 2
-    assert not {"focus_assessment", "interaction_assessment"} & persisted.state.keys()
+    assert not {"focus_assessment", "interaction_assessment", "inquiry_assessment"} & persisted.state.keys()
     checks["state_resume"] = True
     from app.core.config import settings
     output.write_text(json.dumps({"checks": checks, "external_model": settings.LLM_MODEL if live_model else "doubled",

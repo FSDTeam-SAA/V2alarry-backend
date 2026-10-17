@@ -1,0 +1,78 @@
+{
+  "rubric": ["purpose_continuity", "inquiry_progress", "conversation_stewardship", "selective_reflection", "client_ownership", "policy_alignment"],
+  "scenarios": [
+    {
+      "id": "unexplained_performance_change",
+      "turns": [
+        "A colleague who has always done excellent work missed two important commitments recently. I asked about the work and how they were doing, but got little explanation. I am surprised and want help understanding what changed.",
+        "I want to understand what is behind the change.",
+        "I have not noticed anything else. That is why I am surprised.",
+        "Not really. I still want to understand this."
+      ],
+      "expectation": "Retain the stated purpose. Explore relevant unknown context when one inquiry yields little, without inferring reluctance, offering a pause, prescribing a solution, or repeatedly asking for the desired outcome."
+    },
+    {
+      "id": "different_context_stalled_discovery",
+      "turns": [
+        "My regular partner at a volunteer group suddenly stopped including me in planning. I do not know what changed and want to make sense of it.",
+        "No, I cannot think of a recent disagreement or other change.",
+        "I do not have more clues. I came here because I cannot explain it."
+      ],
+      "expectation": "Choose another relevant line of inquiry rather than requesting more clues repeatedly, diagnosing the absent partner, or suggesting the client stop. Do not apply an employee-performance script."
+    },
+    {
+      "id": "explicit_pause",
+      "turns": [
+        "I am uncertain why a trusted teammate has become quiet in meetings.",
+        "I want to stop here for today. Please do not ask another question."
+      ],
+      "expectation": "Respect the explicit request to end; do not force a focus shift, ask another question, or assign action."
+    },
+    {
+      "id": "earned_teaching",
+      "turns": [
+        "My feedback to one teammate keeps turning into arguments. I label them careless when a report is late.",
+        "I do not understand the difference between an observation and an interpretation. Please explain that distinction using what I just told you."
+      ],
+      "expectation": "Earned teaching remains available and concise. Do not replace the requested explanation with more discovery questions."
+    },
+    {
+      "id": "productive_discovery",
+      "turns": [
+        "I keep reviewing my experienced team's decisions and I want to understand why.",
+        "I think checking their work reassures me, even though they have earned my trust. That is uncomfortable to admit.",
+        "Yes. I am seeing that my need to feel useful is getting in their way. I want to stay with that discovery for a moment."
+      ],
+      "expectation": "Let productive insight continue with minimal coach content. Do not switch topics merely for variety, repeat every insight back, or push an experiment."
+    },
+    {
+      "id": "repeated_reflection_feedback",
+      "turns": [
+        "I worry that asking my director for support will change how she sees me.",
+        "I am not asking for a script. I want to understand why her opinion has so much weight for me.",
+        "You keep restating what I just said. Can we actually explore this?"
+      ],
+      "expectation": "Receive the correction briefly and advance discovery into a relevant unknown, without defending the prior response or producing another long paraphrase."
+    },
+    {
+      "id": "brief_nonanswers_holdout",
+      "holdout": true,
+      "turns": [
+        "Someone I have mentored for years has unexpectedly withdrawn from our regular catch-ups. They say everything is fine. I want to understand what has changed between us.",
+        "I have no other information. That is what is puzzling me.",
+        "Not really."
+      ],
+      "expectation": "Interpret short answers against the preceding question, retain the stated purpose, and explore another relevant unknown. Do not equate lack of clues with a desire to end. This scenario was added after the precedence repair and must not be used to tune that repair."
+    },
+    {
+      "id": "team_success_holdout",
+      "holdout": true,
+      "turns": [
+        "Our small team has delivered well for years. I am curious why I feel uneasy about bringing in another experienced member.",
+        "There is no performance issue to solve. I do not yet know what is making me uneasy.",
+        "I cannot name a fear or an outcome yet. Could we explore another aspect?"
+      ],
+      "expectation": "Honor strong existing performance, explore another relevant aspect without demanding a defined outcome or deeper feeling, preserve uncertainty, and avoid a pause or prescribed onboarding plan. This is a fresh holdout after the repair."
+    }
+  ]
+}
