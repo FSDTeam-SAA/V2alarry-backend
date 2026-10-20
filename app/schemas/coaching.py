@@ -71,7 +71,11 @@ class HeldClue(BaseModel):
 class EvidenceReference(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    source: Literal["current_message", "previous_facts", "previous_observations", "history"]
+    source: Literal[
+        "current_message", "previous_facts", "previous_observations", "history",
+        "previous_attempts", "previous_feelings", "previous_agency",
+        "action_context",
+    ]
     excerpt: str = Field(min_length=1, max_length=500)
     index: int | None = Field(default=None, ge=0)
 
@@ -110,6 +114,39 @@ class InquiryAssessment(BaseModel):
     )
 
 
+ActionStatus = Literal["considering", "planned", "attempted", "ongoing", "completed", "abandoned", "unknown"]
+ActionReadiness = Literal["unknown", "not_ready", "declined", "ready"]
+RequestedSupport = Literal["none", "exploration", "conceptual_explanation", "action_wording", "action_planning", "rehearsal"]
+
+
+class ActionContextUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str | None = Field(default=None, max_length=36, description="Reuse the exact existing action ID for wording, preparation, or starting that action. Null only for a distinct new action; omit unchanged actions entirely.")
+    actor: str = Field(min_length=1, max_length=100)
+    action: str = Field(min_length=1, max_length=500,
+        description="The underlying action or inquiry topic, not 'considering', 'asking about', or 'learning wording for' it")
+    status: ActionStatus | None = None
+    readiness: ActionReadiness | None = Field(default=None,
+        description="Capture explicit action boundaries. Ready is allowed ONLY with basis readiness_confirmation and a client quote confirming readiness to this action. With basis intention use null/unknown readiness. Asking how is not ready.")
+    basis: Literal["consideration", "intention", "reported_action", "readiness_boundary", "readiness_confirmation", "correction"] = Field(
+        description="For EVERY update with readiness ready, use readiness_confirmation, including planned actions. Intention alone cannot support ready. A narrower wording or topic choice is part of the existing action, not a new action with inferred readiness.")
+    evidence: list[EvidenceReference] = Field(min_length=1, max_length=3)
+
+
+class ClientActionContext(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(min_length=1, max_length=36)
+    actor: str = Field(min_length=1, max_length=100)
+    action: str = Field(min_length=1, max_length=500)
+    status: ActionStatus = "unknown"
+    readiness: ActionReadiness = "unknown"
+    evidence: list[str] = Field(min_length=1, max_length=3)
+    status_evidence: str | None = Field(default=None, max_length=500)
+    readiness_evidence: str | None = Field(default=None, max_length=500)
+
+
 class CoachingEvidenceState(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -122,6 +159,8 @@ class CoachingEvidenceState(BaseModel):
     held_clues: list[HeldClue] = Field(default_factory=list, max_length=10)
     unresolved_items: list[str] = Field(default_factory=list, max_length=20)
     emerging_agency: list[str] = Field(default_factory=list, max_length=20)
+    action_updates: list[ActionContextUpdate] = Field(default_factory=list, max_length=10,
+        description="Include every newly stated action boundary, including on the first turn. An unchosen action still needs a record when the client declines it or is not comfortable doing it yet. Empty only when no action or boundary changes.")
 
 
 class CoachingWorkingState(CoachingEvidenceState):
@@ -136,6 +175,9 @@ class CoachingWorkingState(CoachingEvidenceState):
     focus_assessment: FocusAssessment | None = None
     interaction_assessment: InteractionAssessment | None = None
     inquiry_assessment: InquiryAssessment | None = None
+    action_context: list[ClientActionContext] = Field(default_factory=list, max_length=10)
+    requested_support: RequestedSupport = "none"
+    support_action_id: str | None = Field(default=None, max_length=36)
 
 
 class RelevantSummarySelection(BaseModel):
@@ -178,6 +220,14 @@ class CoachingTurnAssessment(BaseModel):
     user_owned_outcome: bool = Field(description="An outcome or experiment the client chooses in their own words; not acceptance of Jess's suggestion")
     tested_understanding: bool = Field(description="The client confirms a useful current understanding, or a prior confirmed understanding remains valid; not merely acknowledgment")
     transition_evidence_ids: list[str] = Field(max_length=3)
+    requested_support: RequestedSupport = Field(default="none",
+        description="Classify the client's request, not the response you intend to offer. 'How would I open that meeting?' is action_wording even when readiness is blocked, never exploration or conceptual_explanation.")
+    support_action_id: str | None = Field(default=None, max_length=36,
+        description="Existing underlying action ID for practical support, including opening, wording, preparation, or rehearsal of that action. Prefer the matching action with an active readiness boundary over a narrower paraphrase.")
+
+
+class ContinuingTurnAssessment(CoachingTurnAssessment):
+    inquiry_assessment: InquiryAssessment = Field(...)
 
 
 class CoachingSummaryData(BaseModel):
@@ -191,3 +241,24 @@ class CoachingSummaryData(BaseModel):
     follow_up_question: str | None = Field(default=None, max_length=2000)
     coach_notes: str | None = Field(default=None, max_length=2000)
     prior_session_continuity: str | None = Field(default=None, max_length=2000)
+
+
+class SummaryClientEvidence(EvidenceReference):
+    source: Literal["current_message"] = "current_message"
+    index: None = None
+    excerpt: str = Field(min_length=1, max_length=500,
+        description="Copy an exact contiguous quote from latest_turn.leader, not a paraphrase from working_state. Revision evidence is the exception to the prose summary's no-quote rule.")
+
+
+class SummaryActionChange(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    operation: Literal["preserve", "replace", "clear"] = "preserve"
+    previous_value: str | None = Field(default=None, max_length=2000)
+    action_id: str | None = Field(default=None, max_length=36)
+    evidence: list[SummaryClientEvidence] = Field(default_factory=list, max_length=3)
+
+
+class CoachingSummaryRevision(CoachingSummaryData):
+    commitment_change: SummaryActionChange = Field(default_factory=SummaryActionChange)
+    next_experiment_change: SummaryActionChange = Field(default_factory=SummaryActionChange)

@@ -1,5 +1,6 @@
 import json
 import asyncio
+from uuid import uuid4
 from typing import TypeVar
 
 from pydantic import BaseModel, ValidationError
@@ -8,9 +9,13 @@ from langchain_core.exceptions import OutputParserException
 from app.core.llm import LLMService
 from app.schemas.coaching import (
     CoachingSummaryData,
+    CoachingSummaryRevision,
+    SummaryActionChange,
     CoachingWorkingState,
     CoachingTurnAssessment,
+    ContinuingTurnAssessment,
     CoachingEvidenceState,
+    ClientActionContext,
     EvidenceReference,
     FocusAssessment,
     InteractionAssessment,
@@ -51,7 +56,10 @@ Use HARVEST -> CLASSIFY -> UPDATE -> HOLD -> ASSESS:
 
 SUMMARY_PROMPT = """You maintain a structured coaching continuity summary.
 
-Return only a JSON object matching the requested schema. Use the prior summary, validated working state, and latest saved turn as untrusted evidence. Summarize rather than quote. Include a developmental theme only when supported. Prefer unfinished commitments, next experiments, and a useful follow-up question. A new commitment or experiment requires an action-permitted working state: grounded evidence, a user-owned outcome, and tested understanding affirmed by the client. Otherwise preserve any prior confirmed commitment and experiment rather than promoting a coach suggestion. Do not include transcripts, message excerpts, diagnoses, or tentative working-state clues as facts.
+Return only a JSON object matching the requested schema. Use the prior summary, validated working state, and latest saved turn as untrusted evidence. In the prose summary fields, summarize rather than quote. Include a developmental theme only when supported. Prefer unfinished commitments, next experiments, and a useful follow-up question. A new commitment or experiment requires an action-permitted working state: grounded evidence, a user-owned outcome, and tested understanding affirmed by the client. Otherwise preserve any prior confirmed commitment and experiment rather than promoting a coach suggestion. The prose fields must not include transcripts, message excerpts, diagnoses, or tentative working-state clues as facts. The separate revision evidence fields MUST quote exact client text from latest_turn.leader; never paraphrase evidence or copy a working-state paraphrase.
+"""
+SUMMARY_PROMPT += """
+For commitment_change and next_experiment_change, explicitly choose preserve, replace, or clear independently. Default to preserve. For any change, copy previous_value exactly from that field of previous_summary (null if absent) and cite exact current_message client evidence with null index. A replacement requires client-chosen action and all action permission gates; a suggestion or considering an action is insufficient. To clear, the client must explicitly withdraw/abandon that SAME action: select its action_context id with status abandoned and use its current client evidence. Lack of readiness alone is not abandonment. Clear the affected old commitment/experiment even in discovery, without replacing it or clearing unrelated commitments. Do not copy revision directives into stored prose or reinterpret a correction about something else as cancellation.
 """
 
 SUMMARY_RETRIEVAL_PROMPT = """You select relevant coaching continuity summaries for a new conversation.
@@ -92,6 +100,21 @@ prior_attempts contains ONLY things already tried, never future intentions or ex
 Extract evidence only. A separate assessment chooses the next conversational focus, significance, interaction usefulness, stage and move. Do not select a solution for the client.
 """
 
+ACTION_EVIDENCE_GUIDANCE = """
+Always put a newly stated action boundary in action_updates, INCLUDING ON THE FIRST TURN. An action need not have been chosen, planned, suggested by Jess, or attempted for the client to decline it or be not comfortable doing it yet. Merely putting that boundary in reported_facts, feelings, or held_clues is insufficient: create an unknown/considering action with not_ready/declined readiness and exact client evidence. Anxiety alone is not a refusal; preserve the client's explicit meaning.
+Maintain other consequential action status through action_updates, not narrative assertions of implementation. An empty list means no change; the server retains earlier actions. For an existing action copy its exact id, actor, and action; use null id only for a distinct new action. A question about wording or how to begin concerns the SAME underlying action, not a new action called 'asking how' or 'considering wording'. For example, after 'I am not comfortable arranging a meeting yet', 'How would I open that meeting?' makes NO action update: retain the original meeting record, status and readiness. Do not create a separate 'opening the meeting' record. Do not create duplicate records for paraphrases. Do not catalogue every observed behavior.
+Use considering for a possibility, planned only for an actual client-chosen intention, attempted/ongoing/completed only for reported action, abandoned only for an explicit decision to stop or withdraw that action, and unknown when timing is unclear. A prospective answer to a hypothetical question remains considering. Never infer implementation from an idea, a coach suggestion, a wording request, or a desired outcome. Keep action claims consistent across facts, prior_attempts and action_updates.
+Use null status/readiness for unchanged dimensions. Readiness is specific to this action: not_ready or declined records a boundary, ready requires explicit client confirmation of changed readiness. A question about opening or rehearsing an action does not confirm readiness. Do not convert missing information, uncertainty, or discomfort into a global client trait or request to stop.
+basis is consideration, intention, reported_action, readiness_boundary, readiness_confirmation, or correction. Readiness confirmation may also support a chosen future plan. Execution and abandonment require reported_action or correction; ready requires readiness_confirmation. Preserve a readiness boundary until new client evidence changes it.
+Every update requires exact nonempty client evidence: source current_message with null index, or (only for a new recovered action) source history with the zero-based index in recent_history. The assistant's preceding question can resolve what 'that' refers to but is never evidence of client action. Updates to existing actions require current_message evidence. Never borrow a coach quote, fabricate a source, or treat a prior summary as proof of new action.
+"""
+EVIDENCE_EXTRACTION_PROMPT += ACTION_EVIDENCE_GUIDANCE
+WORKING_STATE_PROMPT += ACTION_EVIDENCE_GUIDANCE
+TURN_ASSESSMENT_PROMPT += """
+Learn about the person when it could change what helps. When the problem trail is exhausted, consider relevant past experience, learned capabilities, confidence, and relationships; explain the significance in the selected focus reason. Use the available previous_attempts, previous_feelings and previous_agency evidence IDs with their actual meanings. Reported feelings and interpretations are not objective facts. Use a supplied relevant experience in later selection rather than repeatedly asking for it. Do not impose a history interview, ask for a nonexistent similar experience again, or keep a declined history topic alive. There is no mandatory sequence or stock history question.
+Classify requested_support as none, exploration, conceptual_explanation, action_wording, action_planning, or rehearsal. support_action_id is the exact action_context ID when practical help concerns that action; otherwise null. A specific conceptual distinction can earn teaching. Practical wording, planning and rehearsal for a not_ready/declined action require readiness exploration first, even when the client asks how to begin. Asking how is not confirmation that the client will do it. Preserve that boundary until explicit evidence changes readiness. If a readiness question has already been asked, explore a specific relevant resource, experience, relationship, or uncertainty instead of rephrasing the same readiness question. Do not reframe the same declined action as a new suggestion. Match the focus to these constraints before choosing the move.
+"""
+
 
 class WorkingStateExtractionError(Exception):
     def __init__(self, category: str):
@@ -121,6 +144,8 @@ class CoachingMemoryService:
             result = await self.llm_service.generate_structured(
                 system_prompt=prompt, user_message=json.dumps(payload), schema=schema,
             )
+            if isinstance(result, BaseModel) and not isinstance(result, schema):
+                result = result.model_dump()
             return schema.model_validate(result)
         raw = await self.llm_service.generate(system_prompt=prompt, user_message=json.dumps(request))
         return self._parse_json(raw, schema)
@@ -143,6 +168,9 @@ class CoachingMemoryService:
                 "focus_assessment": None,
                 "interaction_assessment": None,
                 "inquiry_assessment": None,
+                "action_updates": [],
+                "requested_support": "none",
+                "support_action_id": None,
             }
         )
 
@@ -202,8 +230,12 @@ class CoachingMemoryService:
                 extracted = CoachingWorkingState.model_validate(extracted.model_dump()).model_copy(
                     update={"focus_assessment": None, "interaction_assessment": None, "inquiry_assessment": None},
                 )
+                actions = self._merge_action_context(
+                    previous_state, extracted, user_message, (history or [])[-10:]
+                )
                 return extracted.model_copy(
-                    update={"last_coaching_move": previous_state.last_coaching_move}
+                    update={"last_coaching_move": previous_state.last_coaching_move,
+                            "action_context": actions, "action_updates": []}
                 )
             except (json.JSONDecodeError, ValidationError, OutputParserException, WorkingStateExtractionError) as exc:
                 category = (exc.category if isinstance(exc, WorkingStateExtractionError)
@@ -214,8 +246,69 @@ class CoachingMemoryService:
                     f"Previous extraction failed ({category}). Re-extract from the supplied "
                     "evidence. Preserve valid prior facts, distinguish corrections, and satisfy the schema."
                 )
+                if category == "unsupported_readiness":
+                    request["recovery"] += (
+                        " Check EVERY action update: ready requires basis readiness_confirmation and an explicit "
+                        "client readiness quote. For intention alone leave readiness null/unknown. Update the "
+                        "existing underlying action rather than adding a narrower duplicate."
+                    )
             except Exception as exc:
                 raise WorkingStateExtractionError("provider") from exc
+
+    @staticmethod
+    def _merge_action_context(previous: CoachingWorkingState, extracted: CoachingWorkingState,
+                              message: str, history: list[dict]) -> list[ClientActionContext]:
+        actions = {item.id: item for item in previous.action_context}
+        updated_ids: set[str] = set()
+        for update in extracted.action_updates:
+            old = actions.get(update.id) if update.id else None
+            if update.id and (old is None or update.id in updated_ids):
+                raise WorkingStateExtractionError("unsupported_action")
+            if (old and update.actor == old.actor and update.action == old.action
+                    and update.status in {None, old.status} and update.readiness in {None, old.readiness}):
+                # Retaining a fact does not authorize replacing its original client evidence.
+                updated_ids.add(old.id)
+                continue
+            if not update.id and any(item.actor == update.actor and item.action == update.action for item in actions.values()):
+                raise WorkingStateExtractionError("duplicate_action")
+            excerpts = []
+            for ref in update.evidence:
+                if ref.source == "current_message" and ref.index is None:
+                    text = message
+                elif ref.source == "history" and not old and ref.index is not None and ref.index < len(history):
+                    entry = history[ref.index]
+                    text = entry.get("content", "") if entry.get("role") == "user" else ""
+                else:
+                    raise WorkingStateExtractionError("unsupported_action_evidence")
+                if ref.excerpt not in text:
+                    raise WorkingStateExtractionError("unsupported_action_evidence")
+                excerpts.append(ref.excerpt)
+            if update.status in {"attempted", "ongoing", "completed", "abandoned"} and update.basis not in {"reported_action", "correction"}:
+                raise WorkingStateExtractionError("unsupported_action_status")
+            if update.status == "planned" and update.basis not in {"intention", "readiness_confirmation", "correction"}:
+                raise WorkingStateExtractionError("unsupported_action_status")
+            if update.readiness == "ready" and update.basis != "readiness_confirmation":
+                raise WorkingStateExtractionError("unsupported_readiness")
+            if update.readiness in {"not_ready", "declined"} and update.basis not in {"readiness_boundary", "correction"}:
+                raise WorkingStateExtractionError("unsupported_readiness")
+            if old and (update.actor != old.actor or update.action != old.action) and update.basis != "correction":
+                raise WorkingStateExtractionError("unsupported_action")
+            action_id = old.id if old else str(uuid4())
+            readiness = update.readiness or (old.readiness if old else "unknown")
+            if old and old.readiness in {"not_ready", "declined"} and readiness == "unknown":
+                readiness = old.readiness
+            actions[action_id] = ClientActionContext(
+                id=action_id, actor=update.actor, action=update.action,
+                status=update.status or (old.status if old else "unknown"), readiness=readiness,
+                evidence=list(dict.fromkeys([*excerpts, *(old.evidence if old else [])]))[:3],
+                status_evidence=excerpts[0] if update.status is not None else (old.status_evidence if old else None),
+                readiness_evidence=(excerpts[0] if update.readiness not in {None, "unknown"}
+                                    else old.readiness_evidence if old else None),
+            )
+            updated_ids.add(action_id)
+        if len(actions) > 10:
+            raise WorkingStateExtractionError("action_context_capacity")
+        return list(actions.values())
 
     @staticmethod
     def validate_assessments(state: CoachingWorkingState, request: dict) -> CoachingWorkingState:
@@ -228,6 +321,11 @@ class CoachingMemoryService:
             "latest_assistant": [request.get("latest_assistant_response") or ""],
             "previous_facts": previous.get("reported_facts", []),
             "previous_observations": previous.get("observations", []),
+            "previous_attempts": previous.get("prior_attempts", []),
+            "previous_feelings": previous.get("interpretations_feelings", []),
+            "previous_agency": previous.get("emerging_agency", []),
+            "action_context": CoachingMemoryService._action_evidence(
+                CoachingWorkingState.model_validate(request.get("extracted_state", previous))),
             "history": [entry.get("content", "") if entry.get("role") == "user" else "" for entry in history],
         }
         def resolves(ref) -> bool:
@@ -247,18 +345,28 @@ class CoachingMemoryService:
                 raise WorkingStateExtractionError("unsupported_evidence")
         return state
 
+    @staticmethod
+    def _action_evidence(state: CoachingWorkingState) -> list[str]:
+        return list(dict.fromkeys(text for item in state.action_context
+                                 for text in [*item.evidence, item.status_evidence, item.readiness_evidence] if text))
+
     async def assess_turn(self, *, working_state: CoachingWorkingState, user_message: str,
                           latest_assistant_response: str | None, history: list[dict],
                           previous_state: CoachingWorkingState | None = None) -> CoachingWorkingState:
         prior = previous_state or working_state
         catalog = {"current_message": {"source": "current_message", "excerpt": user_message[:500], "index": None}}
-        for source, texts in (("previous_facts", prior.reported_facts), ("previous_observations", prior.observations)):
+        for source, texts in (("previous_facts", prior.reported_facts), ("previous_observations", prior.observations),
+                              ("previous_attempts", prior.prior_attempts), ("previous_feelings", prior.interpretations_feelings),
+                              ("previous_agency", prior.emerging_agency)):
             catalog.update({f"{source}:{index}": {"source": source, "excerpt": text[:500], "index": index}
                             for index, text in enumerate(texts) if text})
+        catalog.update({f"action_context:{index}": {"source": "action_context", "excerpt": text, "index": index}
+                        for index, text in enumerate(self._action_evidence(working_state))})
         catalog.update({f"history:{index}": {"source": "history", "excerpt": entry["content"][:500], "index": index}
                         for index, entry in enumerate(history[-10:]) if entry.get("role") == "user" and entry.get("content")})
+        assessment_schema = ContinuingTurnAssessment if latest_assistant_response else CoachingTurnAssessment
         request = {
-            "schema": CoachingTurnAssessment.model_json_schema(),
+            "schema": assessment_schema.model_json_schema(),
             "previous_state": (previous_state or working_state).model_dump(exclude={"focus_assessment", "interaction_assessment", "inquiry_assessment"}),
             "extracted_state": working_state.model_dump(exclude={"focus_assessment", "interaction_assessment", "inquiry_assessment"}),
             "new_user_message": user_message, "latest_assistant_response": latest_assistant_response,
@@ -269,7 +377,7 @@ class CoachingMemoryService:
         for attempt in range(2):
             try:
                 assessment = await asyncio.wait_for(
-                    self._generate_schema(TURN_ASSESSMENT_PROMPT, request, CoachingTurnAssessment), timeout=30,
+                    self._generate_schema(TURN_ASSESSMENT_PROMPT, request, assessment_schema), timeout=30,
                 )
                 valid_ids = [key for key in dict.fromkeys(assessment.focus_assessment.evidence_ids) if key in catalog]
                 if not valid_ids:
@@ -292,6 +400,8 @@ class CoachingMemoryService:
                     **assessment.model_dump(exclude={"focus_assessment", "interaction_assessment", "knowledge_gap_observed", "user_owned_outcome", "tested_understanding", "transition_evidence_ids"}),
                     "focus_assessment": focus, "interaction_assessment": interaction, "transition_basis": list(dict.fromkeys(basis)),
                 })
+                if candidate.support_action_id and candidate.support_action_id not in {item.id for item in working_state.action_context}:
+                    raise WorkingStateExtractionError("unsupported_action")
                 return self.validate_assessments(candidate, request)
             except (ValidationError, OutputParserException, json.JSONDecodeError, WorkingStateExtractionError) as exc:
                 category = exc.category if isinstance(exc, WorkingStateExtractionError) else "schema"
@@ -319,23 +429,45 @@ class CoachingMemoryService:
         assistant_response: str,
     ) -> CoachingSummaryData:
         request = {
-            "schema": CoachingSummaryData.model_json_schema(),
+            "schema": CoachingSummaryRevision.model_json_schema(),
             "previous_summary": (
                 previous_summary.model_dump() if previous_summary else None
             ),
             "working_state": working_state.model_dump(exclude={
                 "focus_assessment", "interaction_assessment", "inquiry_assessment", "possible_anchors", "held_clues",
+                "action_updates", "requested_support", "support_action_id",
             }),
             "latest_turn": {
                 "leader": user_message,
                 "coach": assistant_response,
             },
         }
-        candidate = await self._generate_schema(SUMMARY_PROMPT, request, CoachingSummaryData)
+        revision = await self._generate_schema(SUMMARY_PROMPT, request, CoachingSummaryRevision)
+        changes = {field: getattr(revision, f"{field}_change") for field in ("commitment", "next_experiment")}
+        previous = previous_summary or CoachingSummaryData()
+        for field, change in changes.items():
+            if change.operation == "preserve":
+                continue
+            if change.previous_value != getattr(previous, field) or not change.evidence:
+                raise WorkingStateExtractionError("unsupported_summary_change")
+            if any(ref.source != "current_message" or ref.index is not None or ref.excerpt not in user_message
+                   for ref in change.evidence):
+                raise WorkingStateExtractionError("unsupported_summary_change")
+            action = next((item for item in working_state.action_context if item.id == change.action_id), None)
+            if change.action_id and action is None:
+                raise WorkingStateExtractionError("unsupported_summary_change")
+            if change.operation == "clear":
+                if (not getattr(previous, field) or not action or action.status != "abandoned"
+                        or any(ref.excerpt not in action.evidence for ref in change.evidence)):
+                    raise WorkingStateExtractionError("unsupported_summary_change")
+            elif getattr(revision, field) is None:
+                raise WorkingStateExtractionError("unsupported_summary_change")
+        candidate = CoachingSummaryData.model_validate(revision.model_dump(exclude={"commitment_change", "next_experiment_change"}))
         return self._apply_retention_gate(
             previous_summary=previous_summary,
             candidate=candidate,
             working_state=working_state,
+            changes=changes,
         )
 
     @staticmethod
@@ -344,6 +476,7 @@ class CoachingMemoryService:
         previous_summary: CoachingSummaryData | None,
         candidate: CoachingSummaryData,
         working_state: CoachingWorkingState,
+        changes: dict[str, SummaryActionChange] | None = None,
     ) -> CoachingSummaryData:
         decision = CoachingPolicyService.enforce(working_state)
         previous = previous_summary or CoachingSummaryData()
@@ -352,6 +485,12 @@ class CoachingMemoryService:
         action_permitted = decision.coaching_stage == "action"
 
         def retained_value(field: str, *, eligible: bool) -> str | None:
+            if changes and field in changes:
+                operation = changes[field].operation
+                if operation == "clear":
+                    return None
+                if operation == "preserve":
+                    return getattr(previous, field)
             candidate_value = getattr(candidate, field)
             if eligible and candidate_value is not None:
                 return candidate_value

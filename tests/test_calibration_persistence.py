@@ -34,6 +34,9 @@ class TurnPersistenceTests(unittest.IsolatedAsyncioTestCase):
                 user_message="I can influence the priorities.", assistant_response="What matters?",
                 metadata={"docs_retrieved": 2, "coaching_trace": {"version": "calibration-2"}},
                 working_state={"reported_facts": ["I can influence priorities"],
+                               "action_context": [{"id": "kept", "readiness": "not_ready"}],
+                               "action_updates": [{"private": "transient"}],
+                               "requested_support": "action_wording", "support_action_id": "kept",
                                "interaction_assessment": {"usefulness": "possibly_unhelpful"},
                                "inquiry_assessment": {"progress": "stalled"}}, source_turn_count=3,
             )
@@ -46,6 +49,10 @@ class TurnPersistenceTests(unittest.IsolatedAsyncioTestCase):
         saved_state = next(item for item in added if isinstance(item, StateRecord))
         self.assertNotIn("interaction_assessment", saved_state.state)
         self.assertNotIn("inquiry_assessment", saved_state.state)
+        self.assertNotIn("action_updates", saved_state.state)
+        self.assertNotIn("requested_support", saved_state.state)
+        self.assertNotIn("support_action_id", saved_state.state)
+        self.assertEqual(saved_state.state["action_context"], [{"id": "kept", "readiness": "not_ready"}])
 
     async def test_internal_trace_is_saved_without_entering_public_metadata(self):
         nodes = WorkflowNodes.__new__(WorkflowNodes)

@@ -215,7 +215,7 @@ class WorkflowNodes:
         state["metadata"]["coaching_stage"] = decision.coaching_stage
         state["metadata"]["next_coaching_move"] = decision.next_coaching_move
         state["decision_trace"] = {
-            "version": "calibration-3",
+            "version": "calibration-4",
             "model": settings.LLM_MODEL,
             "system_prompt_hash": hashlib.sha256(LEADERSHIP_COACH_SYSTEM_PROMPT.encode()).hexdigest()[:16],
             "working_state_prompt_hash": hashlib.sha256(EVIDENCE_EXTRACTION_PROMPT.encode()).hexdigest()[:16],
@@ -238,6 +238,9 @@ class WorkflowNodes:
             "focus_assessment": decision.focus_assessment.model_dump() if decision.focus_assessment else None,
             "interaction_assessment": decision.interaction_assessment.model_dump() if decision.interaction_assessment else None,
             "inquiry_assessment": decision.inquiry_assessment.model_dump() if decision.inquiry_assessment else None,
+            "action_context": [item.model_dump() for item in decision.action_context],
+            "requested_support": decision.requested_support,
+            "support_action_id": decision.support_action_id,
         }
         state["coaching_context"] = self._build_coaching_context(
             relevant_summaries=state.get("retained_summaries", []),

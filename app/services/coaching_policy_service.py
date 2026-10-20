@@ -69,6 +69,21 @@ class CoachingPolicyService:
                 normalized_state, stage="discovery", move="explore_readiness",
                 unknowns=unknowns,
             )
+        practical_help = normalized_state.requested_support in {"action_wording", "action_planning", "rehearsal"}
+        practical_move = normalized_state.coaching_stage == "action" or (
+            normalized_state.next_coaching_move == "teach_selectively"
+            and normalized_state.requested_support != "conceptual_explanation"
+        )
+        blocked_actions = [item for item in normalized_state.action_context
+                           if (item.readiness in {"not_ready", "declined"} or item.status == "abandoned")
+                           and (not normalized_state.support_action_id or item.id == normalized_state.support_action_id)]
+        if blocked_actions and (practical_help or practical_move):
+            return cls._downgrade(
+                normalized_state, stage="discovery",
+                move="shift_focus" if inquiry and inquiry.progress == "stalled" else "explore_readiness",
+                unknowns=cls._with_unknowns(unknowns, "readiness"),
+                discard_transition_basis=("tested_understanding",),
+            )
         if (inquiry and inquiry.progress == "stalled"
                 and normalized_state.client_generation != "productive"
                 and client_response != "corrected"
@@ -275,7 +290,8 @@ class CoachingPolicyService:
                 "what landed."
             )
         if decision.inquiry_assessment and decision.inquiry_assessment.client_requested_pause:
-            guidance = (
+            return (
+                f"Current coaching stage: {decision.coaching_stage}. Permitted next move: {move}. "
                 "Respect the client's explicit request to pause or end. Acknowledge it briefly "
                 "without another discovery question, pressure to continue, or an action assignment."
             )
@@ -365,10 +381,25 @@ class CoachingPolicyService:
                 "topic by exploring another; do not recycle the same question or impose an action."
             )
 
+        action_guidance = (
+            " An action marked considering, planned, or unknown is not yet reported as done. "
+            "Preserve actor, action status, and uncertainty from action_context. Do not turn an "
+            "idea or a coach suggestion into an established practice, prior attempt, or commitment. "
+            "An abandoned action must not be proposed again unless the client reopens it. "
+            "Narrative facts alone do not establish implementation when action status is unconfirmed."
+        )
+        if any(item.readiness in {"not_ready", "declined"} for item in decision.action_context):
+            action_guidance += (
+                " Respect the specific action boundaries in action_context: a wording request does not establish readiness. "
+                "Before wording, rehearsal, or planning for a blocked action, explore one genuinely unresolved aspect "
+                "of readiness, experience, confidence, or relationship. Do not ask again what the client already answered "
+                "or propose the same action in new words. Only explicit client evidence of changed readiness reopens it. "
+                "A specific conceptual explanation may still be earned without committing to that action."
+            )
         return (
             f"Current coaching stage: {decision.coaching_stage}. "
             f"Permitted next move: {move}. {guidance} {knowledge_guidance}"
-            f"{move_guidance}{generation_guidance}{feedback_guidance}"
+            f"{move_guidance}{generation_guidance}{feedback_guidance}{action_guidance}"
             " Help the client see more clearly and discover their own available choices. "
             "Attend to role, relationship, authority, risk, prior attempts, and agency when relevant. "
             "Do not assume an ambitious goal implies a broken process. A question must not "
