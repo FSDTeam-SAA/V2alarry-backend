@@ -125,10 +125,10 @@ class ActionContextUpdate(BaseModel):
     id: str | None = Field(default=None, max_length=36, description="Reuse the exact existing action ID for wording, preparation, or starting that action. Null only for a distinct new action; omit unchanged actions entirely.")
     actor: str = Field(min_length=1, max_length=100)
     action: str = Field(min_length=1, max_length=500,
-        description="The underlying action or inquiry topic, not 'considering', 'asking about', or 'learning wording for' it")
+        description="The action the client actually describes, never an inferred opposite or goal. 'I keep reviewing their work' describes reviewing their work, NOT stopping it. Do not invent a contemplated action from a concern. For an existing record copy its exact action; wording/preparation refers to that underlying action.")
     status: ActionStatus | None = None
     readiness: ActionReadiness | None = Field(default=None,
-        description="Capture explicit action boundaries. Ready is allowed ONLY with basis readiness_confirmation and a client quote confirming readiness to this action. With basis intention use null/unknown readiness. Asking how is not ready.")
+        description="Unknown unless the client explicitly states readiness, hesitation or refusal about this action. Continuing a behavior does NOT mean not_ready to stop it. Ready requires basis readiness_confirmation and a confirming client quote; with intention alone use null/unknown. Asking how is not ready.")
     basis: Literal["consideration", "intention", "reported_action", "readiness_boundary", "readiness_confirmation", "correction"] = Field(
         description="For EVERY update with readiness ready, use readiness_confirmation, including planned actions. Intention alone cannot support ready. A narrower wording or topic choice is part of the existing action, not a new action with inferred readiness.")
     evidence: list[EvidenceReference] = Field(min_length=1, max_length=3)
