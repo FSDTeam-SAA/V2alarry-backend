@@ -32,6 +32,20 @@ class ActionContextTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(state.action_context[0].status, "considering")
         self.assertIn("not yet reported as done", CoachingPolicyService.build_response_policy(state))
 
+    async def test_information_limit_cannot_create_a_readiness_boundary(self):
+        message = "I cannot find another process problem to analyze."
+        state = await self.extract(message, [action_update(message,
+            action="analyze another process problem", readiness="not_ready", basis="information_limit")])
+        self.assertEqual(state.action_context, [])
+
+    async def test_information_limit_does_not_erase_an_existing_boundary(self):
+        boundary = "I am not comfortable with that meeting yet."
+        state = await self.extract(boundary, [action_update(boundary, readiness="not_ready", basis="readiness_boundary")])
+        message = "I cannot find another example."
+        result = await self.extract(message, [action_update(message, id=state.action_context[0].id,
+            readiness="unknown", basis="information_limit")], state)
+        self.assertEqual(result.action_context, state.action_context)
+
     async def test_omission_preserves_boundary_beyond_history_window_and_resume(self):
         message = "I am not comfortable with that meeting yet."
         state = await self.extract(message, [action_update(message, actor="client", action="meet the boss",

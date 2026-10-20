@@ -128,9 +128,9 @@ class ActionContextUpdate(BaseModel):
         description="The action the client actually describes, never an inferred opposite or goal. 'I keep reviewing their work' describes reviewing their work, NOT stopping it. Do not invent a contemplated action from a concern. For an existing record copy its exact action; wording/preparation refers to that underlying action.")
     status: ActionStatus | None = None
     readiness: ActionReadiness | None = Field(default=None,
-        description="Unknown unless the client explicitly states readiness, hesitation or refusal about this action. Continuing a behavior does NOT mean not_ready to stop it. Ready requires basis readiness_confirmation and a confirming client quote; with intention alone use null/unknown. Asking how is not ready.")
-    basis: Literal["consideration", "intention", "reported_action", "readiness_boundary", "readiness_confirmation", "correction"] = Field(
-        description="For EVERY update with readiness ready, use readiness_confirmation, including planned actions. Intention alone cannot support ready. A narrower wording or topic choice is part of the existing action, not a new action with inferred readiness.")
+        description="Unknown unless the client explicitly states willingness, hesitation or refusal about this action. Lack of information, examples, resources or ability is NOT not_ready/declined. Continuing a behavior does NOT mean not_ready to stop it. Ready requires basis readiness_confirmation and a confirming client quote; with intention alone use null/unknown. Asking how is not ready.")
+    basis: Literal["consideration", "intention", "reported_action", "readiness_boundary", "readiness_confirmation", "information_limit", "correction"] = Field(
+        description="information_limit means missing information, examples, resources or ability, not unwillingness; these updates cannot establish action/readiness. readiness_boundary requires actual unwillingness, discomfort or refusal. EVERY ready update requires readiness_confirmation. Intention alone cannot support ready; do not invent a narrower action.")
     evidence: list[EvidenceReference] = Field(min_length=1, max_length=3)
 
 
