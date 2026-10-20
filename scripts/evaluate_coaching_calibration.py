@@ -42,7 +42,8 @@ async def evaluate(args):
         "system_prompt_hash": hashlib.sha256(LEADERSHIP_COACH_SYSTEM_PROMPT.encode()).hexdigest(),
         "source_hashes": {str(path): hashlib.sha256((args.code_root / path).read_bytes()).hexdigest()
             for path in (Path("app/core/llm.py"), Path("app/schemas/coaching.py"),
-                         Path("app/services/coaching_memory_service.py"), Path("app/services/coaching_policy_service.py"))},
+                         Path("app/services/coaching_memory_service.py"), Path("app/services/coaching_policy_service.py"),
+                         Path("app/workflows/chat_workflow.py"), Path("app/services/chat_history_service.py"))},
         "limits": {"requests": args.max_requests, "total_tokens": args.max_total_tokens},
         "calls": [], "conversations": [],
     }
@@ -123,7 +124,9 @@ async def evaluate(args):
                 conversation = {"id": scenario["id"], "repeat": repeat + 1,
                                 "holdout": scenario.get("holdout", False), "turns": []}
                 report["conversations"].append(conversation)
-                state, history = CoachingWorkingState(), []
+                state, history = CoachingWorkingState(), list(scenario.get("initial_history", []))
+                summary = None
+                conversation["mode"] = "teacher_forced_probe" if history else "free_running"
                 for user_message in scenario["turns"]:
                     turn = {"user": user_message}
                     conversation["turns"].append(turn)
@@ -164,6 +167,14 @@ async def evaluate(args):
                     )
                     history.extend([{"role": "user", "content": user_message},
                                     {"role": "assistant", "content": turn["assistant"]}])
+                    if fixture.get("summary"):
+                        try:
+                            summary = await memory.refresh_summary(previous_summary=summary,
+                                working_state=state, user_message=user_message, assistant_response=turn["assistant"])
+                            turn["summary_status"] = "updated"
+                            turn["summary"] = summary.model_dump(exclude_none=True)
+                        except Exception as exc:
+                            turn["summary_status"] = getattr(exc, "category", type(exc).__name__)
                     save()
                 if args.judge:
                     raw = await metered.generate(
