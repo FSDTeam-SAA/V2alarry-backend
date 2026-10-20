@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, patch
 
 from pydantic import ValidationError
 
-from app.schemas.coaching import CoachingSummaryData, CoachingWorkingState, HeldClue
+from app.schemas.coaching import CoachingSummaryData, CoachingSummaryRevision, CoachingWorkingState, HeldClue
 from app.services.coaching_memory_service import (
     WORKING_STATE_PROMPT,
     CoachingMemoryService,
@@ -228,9 +228,13 @@ class CoachingMemoryContractTests(unittest.TestCase):
     def test_summary_keeps_a_new_experiment_after_client_affirms_an_action(self):
         class _SummaryLLM:
             async def generate(self, **_kwargs):
-                return CoachingSummaryData(
+                change = {"operation": "replace", "previous_value": None,
+                          "evidence": [{"source": "current_message",
+                                        "excerpt": "I will ask for one concrete example on Thursday."}]}
+                return CoachingSummaryRevision(
                     commitment="Ask for one concrete example in the next check-in.",
                     next_experiment="Practice that opening on Thursday.",
+                    commitment_change=change, next_experiment_change=change,
                 ).model_dump_json()
 
         working_state = CoachingWorkingState(

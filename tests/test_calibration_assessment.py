@@ -13,13 +13,23 @@ def assessment(message, **overrides):
         focus_assessment={"focus": "Client clarity", "reason": "The client chooses what matters",
             "evidence_ids": ["current_message"] if message != "An invented quote" else ["invented"]},
         interaction_assessment=None, coaching_stage="discovery", next_coaching_move="explore_desired_help",
+        inquiry_assessment={"progress": "unknown", "reason": "No progress conclusion is warranted", "client_requested_pause": False},
         client_response_to_last_move="not_applicable", client_generation="emerging",
         essential_unknowns=["desired_help"], transition_basis=["grounded_evidence"], **overrides,
         knowledge_gap_observed=False, user_owned_outcome=False, tested_understanding=False, transition_evidence_ids=[],
     )
 
-
 class TurnAssessmentTests(unittest.IsolatedAsyncioTestCase):
+    async def test_continuing_turn_recovers_a_missing_inquiry_assessment(self):
+        valid = assessment("I do not know")
+        missing = valid.model_copy(update={"inquiry_assessment": None})
+        llm = SimpleNamespace(generate_structured=AsyncMock(side_effect=[missing, valid]))
+        result = await CoachingMemoryService(llm).assess_turn(
+            working_state=CoachingWorkingState(reported_facts=["I want clarity."]),
+            user_message="I do not know", latest_assistant_response="What changed?", history=[])
+        self.assertIsNotNone(result.inquiry_assessment)
+        self.assertEqual(llm.generate_structured.await_count, 2)
+
     async def test_assessment_preserves_the_existing_answer_level_signal(self):
         llm = SimpleNamespace(generate_structured=AsyncMock(return_value=assessment("I choose this experiment", answer_level="commitment")))
         result = await CoachingMemoryService(llm).assess_turn(

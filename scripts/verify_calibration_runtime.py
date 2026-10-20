@@ -31,7 +31,7 @@ async def verify(url: str, output: Path, serve_port: int = 0, live_model: bool =
     from app.models.agreement_acceptance import AgreementAcceptance
     from app.services.chat_history_service import ChatHistoryService
     from app.services.coaching_memory_service import CoachingMemoryService
-    from app.schemas.coaching import CoachingWorkingState, CoachingSummaryData, CoachingTurnAssessment, CoachingEvidenceState
+    from app.schemas.coaching import CoachingWorkingState, CoachingSummaryData, CoachingSummaryRevision, CoachingTurnAssessment, CoachingEvidenceState
     from app.utils.jwt import create_access_token
     from app.utils.security import has_password
     from app.workflows.chat_workflow import ChatWorkflow, WorkflowNodes
@@ -61,22 +61,45 @@ async def verify(url: str, output: Path, serve_port: int = 0, live_model: bool =
             yield "about having that influence?"
 
         async def generate_structured(self, *, schema, **kwargs):
-            if schema is CoachingTurnAssessment:
+            payload = json.loads(kwargs["user_message"])
+            if issubclass(schema, CoachingTurnAssessment):
+                wording = "How would I open that meeting?" == payload["new_user_message"]
+                actions = payload["extracted_state"].get("action_context", [])
                 return CoachingTurnAssessment(
                     focus_assessment={"focus": "Client's desired clarity", "reason": "Client wants to think clearly",
                         "evidence_ids": ["current_message"]},
                     interaction_assessment=None,
                     inquiry_assessment={"progress": "advancing", "reason": "Client is clarifying their purpose",
                                         "client_requested_pause": False},
-                    coaching_stage="discovery", next_coaching_move="explore_desired_help",
+                    coaching_stage="discovery", next_coaching_move="teach_selectively" if wording else "explore_desired_help",
                     client_response_to_last_move="not_applicable", client_generation="emerging",
                     essential_unknowns=["desired_help"], transition_basis=["grounded_evidence"],
-                    knowledge_gap_observed=False, user_owned_outcome=False, tested_understanding=False, transition_evidence_ids=[],
+                    knowledge_gap_observed=wording, user_owned_outcome=False, tested_understanding=False,
+                    transition_evidence_ids=["current_message"] if wording else [],
+                    requested_support="action_wording" if wording else "exploration",
+                    support_action_id=actions[0]["id"] if wording else None,
                 )
             if schema is CoachingEvidenceState:
-                return CoachingEvidenceState(reported_facts=["The client can negotiate priorities"])
-            if schema is CoachingSummaryData:
-                return CoachingSummaryData(presenting_focus="Client's influence over priorities")
+                message = payload["new_user_message"]
+                updates = []
+                if "not comfortable requesting" in message or "decided to abandon" in message:
+                    old = payload["previous_state"].get("action_context", [])
+                    updates = [{"id": old[0]["id"] if old else None, "actor": "client",
+                        "action": "request a meeting with the boss",
+                        "status": "abandoned" if "decided to abandon" in message else "considering",
+                        "readiness": None if "decided to abandon" in message else "not_ready",
+                        "basis": "reported_action" if "decided to abandon" in message else "readiness_boundary",
+                        "evidence": [{"source": "current_message", "excerpt": message}]}]
+                return CoachingEvidenceState(reported_facts=["The client can negotiate priorities"], action_updates=updates)
+            if schema is CoachingSummaryRevision:
+                changes = {}
+                previous = payload["previous_summary"] or {}
+                abandoned = next((item for item in payload["working_state"]["action_context"] if item["status"] == "abandoned"), None)
+                if abandoned:
+                    changes = {f"{field}_change": {"operation": "clear", "previous_value": previous[field],
+                        "action_id": abandoned["id"], "evidence": [{"source": "current_message", "excerpt": payload["latest_turn"]["leader"]}]}
+                        for field in ("commitment", "next_experiment") if previous.get(field)}
+                return CoachingSummaryRevision(presenting_focus="Client's influence over priorities", **changes)
             return schema()
 
     timings = {}
@@ -84,7 +107,37 @@ async def verify(url: str, output: Path, serve_port: int = 0, live_model: bool =
         from app.core.llm import LLMService
 
         class LiveLLM(LLMService):
+            def __init__(self):
+                from app.core.config import settings
+                from langchain_openai import ChatOpenAI
+                import tiktoken
+                self.llm = ChatOpenAI(model=settings.LLM_MODEL, temperature=settings.LLM_TEMPERATURE,
+                    max_tokens=settings.MAX_TOKENS, openai_api_key=settings.OPENAI_API_KEY, timeout=25, max_retries=0)
+                self.encoder = tiktoken.get_encoding("cl100k_base")
+                self.calls = 0
+                self.reserved_tokens = 0
+
+            def reserve(self, *, schema=None, **kwargs):
+                from app.core.config import settings
+                estimate = sum(len(self.encoder.encode(str(m.content))) + 16 for m in self.build_messages(**kwargs))
+                if schema:
+                    estimate += len(self.encoder.encode(json.dumps(schema.model_json_schema())))
+                reservation = estimate + settings.MAX_TOKENS
+                if self.calls >= 32 or self.reserved_tokens + reservation > 450000:
+                    raise RuntimeError("Isolated runtime model budget exhausted")
+                self.calls += 1
+                self.reserved_tokens += reservation
+
+            async def generate(self, **kwargs):
+                self.reserve(**kwargs)
+                return await super().generate(**kwargs)
+
+            async def generate_structured(self, *, schema, **kwargs):
+                self.reserve(schema=schema, **kwargs)
+                return await super().generate_structured(schema=schema, **kwargs)
+
             async def generate_stream(self, **kwargs):
+                self.reserve(**kwargs)
                 async for token in super().generate_stream(**kwargs):
                     timings.setdefault("sse_first_token_seconds", round(time.monotonic() - request_started, 3))
                     yield token
@@ -92,7 +145,19 @@ async def verify(url: str, output: Path, serve_port: int = 0, live_model: bool =
     nodes = WorkflowNodes.__new__(WorkflowNodes)
     nodes.chat_history_service = ChatHistoryService()
     nodes.llm_service = LiveLLM() if live_model else TestLLM()
-    nodes.coaching_memory_service = CoachingMemoryService(nodes.llm_service)
+    summary_results = []
+
+    class ObservedMemory(CoachingMemoryService):
+        async def refresh_summary(self, **kwargs):
+            try:
+                result = await super().refresh_summary(**kwargs)
+            except Exception as exc:
+                summary_results.append(getattr(exc, "category", type(exc).__name__))
+                raise
+            summary_results.append("updated")
+            return result
+
+    nodes.coaching_memory_service = ObservedMemory(nodes.llm_service)
     nodes.document_service = SimpleNamespace(get_accessible_document_ids=AsyncMock(return_value=[]))
     nodes._fetch_documents = AsyncMock(return_value=[])
     workflow = ChatWorkflow.__new__(ChatWorkflow)
@@ -146,12 +211,26 @@ async def verify(url: str, output: Path, serve_port: int = 0, live_model: bool =
             leaked = await client.get(f"/api/v1/chat/conversations/{conversation_id}/messages", headers=other)
             assert leaked.json() == []
             checks["ownership_isolation"] = True
+            await ChatHistoryService().save_summary(conversation_id=conversation_id, user_id=str(user_ids[0]),
+                summary=CoachingSummaryData(commitment="Request a meeting with the boss."), source_turn_count=2)
+            for message in ("I am not comfortable requesting a meeting with my boss yet.", "How would I open that meeting?"):
+                response = await client.post("/api/v1/chat/", headers=headers,
+                    json={"message": message, "conversation_id": conversation_id})
+                assert response.status_code == 200, response.text
+            assert response.json()["metadata"]["next_coaching_move"] in {"explore_readiness", "shift_focus", "deepen", "clarify", "test_understanding"}
+            boundary_state = await ChatHistoryService().get_working_state(conversation_id=conversation_id, user_id=str(user_ids[0]))
+            assert any(item["readiness"] == "not_ready" for item in boundary_state.state["action_context"])
+            checks["action_boundary_resume"] = True
+            checks["readiness_before_wording"] = True
+            response = await client.post("/api/v1/chat/", headers=headers, json={
+                "message": "I have decided to abandon that meeting request. I no longer want to do it.", "conversation_id": conversation_id})
+            assert response.status_code == 200, response.text
     async with AsyncSessionLocal() as db:
         import uuid as uuid_module
         saved = list((await db.execute(select(Message).where(Message.conversation_id == uuid_module.UUID(conversation_id)).order_by(Message.created_at))).scalars())
-        assert len(saved) == 4
+        assert len(saved) == 10
         for user, assistant in zip(saved[::2], saved[1::2]):
-            assert user.doc_metadata["coaching_trace"]["version"] == "calibration-3"
+            assert user.doc_metadata["coaching_trace"]["version"] == "calibration-4"
             assert user.doc_metadata["assistant_message_id"] == str(assistant.id)
             assert assistant.doc_metadata["user_message_id"] == str(user.id)
             assert user.doc_metadata["turn_id"] == assistant.doc_metadata["turn_id"]
@@ -162,26 +241,29 @@ async def verify(url: str, output: Path, serve_port: int = 0, live_model: bool =
                 assert user.doc_metadata["coaching_trace"]["assessment_status"] == "updated"
         checks["postgres_readback"] = True
         summary = (await db.execute(select(CoachingSummary).where(CoachingSummary.conversation_id == uuid_module.UUID(conversation_id)))).scalar_one()
-        assert summary.source_turn_count == 2 and summary.generation_status == "current"
+        assert summary.source_turn_count == 5 and summary.generation_status == "current"
+        assert summary.commitment is None
+        checks["abandoned_commitment_cleared"] = True
         checks["continuity_refresh"] = True
         # Reproduce the timestamp tie in legacy rows using only this run's synthetic pair.
         saved[1].created_at = saved[0].created_at
         await db.commit()
     service = ChatHistoryService()
     tied = await service.get_conversation_messages(conversation_id, str(user_ids[0]))
-    assert [message["role"] for message in tied] == ["user", "assistant", "user", "assistant"]
+    assert [message["role"] for message in tied] == ["user", "assistant"] * 5
     latest = await service.get_conversation_history(conversation_id, str(user_ids[0]), limit=2)
     assert [message["role"] for message in latest] == ["user", "assistant"]
     checks["legacy_timestamp_order"] = True
     # A new service reads persisted continuity rather than relying on an in-memory workflow.
     persisted = await ChatHistoryService().get_working_state(conversation_id=conversation_id, user_id=str(user_ids[0]))
-    assert persisted.source_turn_count == 2
-    assert not {"focus_assessment", "interaction_assessment", "inquiry_assessment"} & persisted.state.keys()
+    assert persisted.source_turn_count == 5
+    assert not {"focus_assessment", "interaction_assessment", "inquiry_assessment", "action_updates", "requested_support", "support_action_id"} & persisted.state.keys()
     checks["state_resume"] = True
     from app.core.config import settings
     output.write_text(json.dumps({"checks": checks, "external_model": settings.LLM_MODEL if live_model else "doubled",
                                  "production_database": "untouched", "timings": timings,
-                                 "working_state": persisted.state}, indent=2))
+                                 "working_state": persisted.state, "summary_results": summary_results,
+                                 "model_budget": {"calls": nodes.llm_service.calls, "reserved_tokens": nodes.llm_service.reserved_tokens} if live_model else None}, indent=2))
     print(json.dumps(checks))
     if serve_port:
         import uvicorn
@@ -205,6 +287,6 @@ if __name__ == "__main__":
     parser.add_argument("--database-url", required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--serve-port", type=int, default=0, help="Optionally keep the isolated app running for a browser test")
-    parser.add_argument("--live-model", action="store_true", help="Use the configured provider for two synthetic authenticated turns; retrieval remains doubled")
+    parser.add_argument("--live-model", action="store_true", help="Use the configured provider for five synthetic authenticated turns; retrieval remains doubled")
     arguments = parser.parse_args()
     asyncio.run(verify(arguments.database_url, arguments.output, arguments.serve_port, arguments.live_model))

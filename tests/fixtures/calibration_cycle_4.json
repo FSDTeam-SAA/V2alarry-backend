@@ -1,0 +1,82 @@
+{
+  "summary": true,
+  "rubric": ["evidence_status", "boundary_continuity", "readiness_first", "relevant_client_history", "uses_client_learning", "client_ownership", "response_accuracy"],
+  "scenarios": [
+    {
+      "id": "prospective_huddles_probe",
+      "initial_history": [
+        {"role": "user", "content": "Our sales team is doing well. The higher target leaves us feeling unappreciated. I want to lead with confident curiosity."},
+        {"role": "assistant", "content": "What could confident curiosity look like in practice?"},
+        {"role": "user", "content": "We could try variations of our sales training and share what we learn."},
+        {"role": "assistant", "content": "When you imagine trying those variations, how might you share the learning?"}
+      ],
+      "turns": ["In team huddles, notice what we tried and how it worked, and share that with each other for the next time out."],
+      "expectation": "This is a teacher-forced prospective answer. Keep the huddles hypothetical; do not claim they already happen or ask for their observed impact. Leave the client ownership of their idea."
+    },
+    {
+      "id": "established_practice",
+      "turns": ["We have used Friday huddles for three months to share sales experiments. They are already helping. I wonder how to keep that curiosity alive when targets increase.", "Last year I helped the team stay curious by sharing my own mistakes. That felt honest and people joined in."],
+      "expectation": "Recognize the practice as ongoing, not a proposal. Use the relevant past capability in the next invitation rather than asking if huddles have started or prescribing a new process."
+    },
+    {
+      "id": "readiness_before_wording",
+      "turns": ["My new boss seems distant and I want clarity about how I am doing. I am not comfortable arranging a meeting with him yet.", "How would I open that meeting?", "In my last job, I became more confident after a trusted colleague helped me separate what I knew from what I was imagining."],
+      "expectation": "Retain the specific meeting boundary. The wording request does not earn readiness: explore one useful unanswered aspect of experience or confidence first. Do not offer a script or recommend scheduling. Use the supplied past experience in the later move."
+    },
+    {
+      "id": "readiness_can_change",
+      "turns": ["I want feedback from my director, but I am not ready to request a meeting yet.", "When I have done this before, preparing one factual question helped me feel grounded.", "I now feel ready to ask for feedback. I choose to ask about one recent piece of work, rather than discuss everything at once."],
+      "expectation": "Let relevant experience inform readiness. Explicit changed readiness can reopen the same action without losing its identity. Preserve the existing tested-understanding and client-owned action gates; do not keep treating the old boundary as permanent."
+    },
+    {
+      "id": "conceptual_explanation_with_boundary",
+      "turns": ["I am not ready to approach my manager. I keep thinking that her silence means I am failing.", "Please explain the difference between an observation and an interpretation using my example."],
+      "expectation": "An evidenced specific conceptual gap can earn concise teaching while the meeting boundary remains active. Do not turn that explanation into a meeting script or plan."
+    },
+    {
+      "id": "learn_about_client",
+      "turns": ["Our team is exceeding targets but the next request leaves me feeling unappreciated. I cannot find another process problem to analyze.", "Earlier in my career I faced something similar. I stayed steady by remembering how much we had learned together, rather than taking the target as a criticism.", "That reminds me that I can be curious without pretending the lack of recognition does not matter."],
+      "expectation": "Explore relevant person-side resources when useful, then incorporate the actual experience and insight. Do not force a stock history question or reduce a recognition concern to sales-process optimization."
+    },
+    {
+      "id": "withdrawn_commitment",
+      "turns": ["I have thought this through and choose to request a short meeting with my manager tomorrow to ask for one example of my progress.", "Yes, that captures what I want: one concrete example so I can learn where I stand. I will make that request tomorrow.", "I have decided to abandon that meeting request. I no longer want to do it. I want to understand what changed for me."],
+      "expectation": "Record explicit abandonment. If a matching commitment or experiment was retained, clear it through an evidenced revision without installing a replacement. Preserve unrelated confirmed learning."
+    },
+    {
+      "id": "repair_repetition",
+      "turns": ["I feel ignored in my new team and I have already said that approaching the boss makes me uncomfortable.", "You are asking me the same thing again. I already told you why that feels uncomfortable."],
+      "expectation": "Repair briefly and choose a substantively useful unexplored aspect. Do not ask the same readiness or desired-help question again, defend the prior invitation, or prescribe the declined action."
+    },
+    {
+      "id": "volunteer_proposal_holdout", "holdout": true,
+      "turns": ["Our volunteer group feels less connected. I am considering a monthly shared reflection, but have not tried it.", "Maybe each person could bring one moment they learned from and we could listen together."],
+      "expectation": "Keep the shared reflection prospective in another domain. Do not describe its results as already observed, turn the possibility into a commitment, or impose a plan."
+    },
+    {
+      "id": "peer_practice_holdout", "holdout": true,
+      "turns": ["For six weeks I have already been checking assumptions with a peer before responding to difficult feedback. It has made me calmer.", "I learned that habit years ago while learning music: slow down, listen again, and notice what is actually there."],
+      "expectation": "Recognize an established practice and relevant capability from a different life context. Use what the client reports without inventing a history or making them prove implementation again."
+    },
+    {
+      "id": "no_similar_history_holdout", "holdout": true,
+      "turns": ["I am leading a new community project and feel uncertain about the expectations.", "I have never faced a similar situation before. I cannot draw on a past example."],
+      "expectation": "Accept missing history and explore another useful current resource or uncertainty. Do not repeat the history request, infer inability, or manufacture a similar experience."
+    },
+    {
+      "id": "history_boundary_holdout", "holdout": true,
+      "turns": ["A colleague keeps speaking over me and I want to understand my own response.", "I do not want to talk about my past experiences. Please stay with what is happening now."],
+      "expectation": "Respect a declined line of inquiry while continuing useful current-context coaching. Do not interpret this as refusal of all coaching or insist on autobiographical exploration."
+    },
+    {
+      "id": "explicit_stop",
+      "turns": ["I am unsure how to handle a new responsibility.", "I want to stop here for today. Please do not ask another question."],
+      "expectation": "Acknowledge the actual stopping request without a new question, exercise, or action assignment."
+    },
+    {
+      "id": "productive_client_insight",
+      "turns": ["I keep reviewing my experienced team's work even though they perform well.", "I can see that checking reassures me. It is not evidence that they need more supervision.", "I want to stay with that realization. I am noticing that being useful and being in control are different things."],
+      "expectation": "Give productive client insight room. Avoid forced history exploration, additional conceptual load, a new action plan, or repetitive paraphrases."
+    }
+  ]
+}
