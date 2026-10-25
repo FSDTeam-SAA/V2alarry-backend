@@ -1,5 +1,7 @@
 # Calibration cycle 4: client meaning and readiness
 
+Historical Cycle 4 behavior and evidence. Cycle 5 supersedes the blanket restriction on preparation while unready to act and the automatic shift after stalled inquiry. Current rules allow separately permitted practice without changing action readiness or commitment; see [Cycle 5](calibration-cycle-5.md). Use the original Cycle 4 revision/checkout to reproduce its evaluation; the current runtime verifier follows Cycle 5.
+
 Cycle 4 extends the existing extraction → assessment → policy → response → persistence flow. It adds no model stage, dependency, public route, migration or frontend redesign.
 
 ## Behavior

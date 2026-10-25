@@ -1,0 +1,52 @@
+{
+  "summary": true,
+  "rubric": ["temporal_accuracy", "shared_understanding", "useful_progress", "preparation_without_commitment", "boundary_scope", "client_ownership", "actual_reply"],
+  "scenarios": [
+    {
+      "id": "workload_original_probe",
+      "initial_history": [
+        {"role": "user", "content": "One of our team members quit, and my boss has given me all of their work in addition to mine. Help!"},
+        {"role": "assistant", "content": "How are you currently managing the additional tasks along with your existing responsibilities?"},
+        {"role": "user", "content": "I'm doing my best. I've been staying late the last few days, and I'm still behind. Been thinking about talking to her, but not quite sure how to approach her. She trusts me, and that is why I get so much work."},
+        {"role": "assistant", "content": "If your boss does say the situation can't change, what do you imagine your options would be in that moment?"},
+        {"role": "user", "content": "Probably sit down with my team and problem solve it together."},
+        {"role": "assistant", "content": "What do you hope will come out of that conversation with your team?"},
+        {"role": "user", "content": "Some approach we all feel might work between us."},
+        {"role": "assistant", "content": "What is the approach that you and your team have in mind?"}
+      ],
+      "turns": ["I have no idea. We haven't had the meeting yet.", "Yes, talking to my boss first and then involving the team if needed is the possibility I see. I haven't committed to either meeting."],
+      "expectation": "Locally reconstructed pivotal replay, not an original server trace. Synthesize the conditional possible path and repair the presupposition. Do not repeat the desired-outcome question, request results from a meeting that has not happened, or invent commitment."
+    },
+    {
+      "id": "distrust_original_probe",
+      "initial_history": [
+        {"role": "user", "content": "A new employee transferred to my team and just said they don't trust me. I gave them an initial task and very explicit direction because I am still getting to know their capabilities."},
+        {"role": "assistant", "content": "What would you hope to achieve or learn from a conversation with them?"},
+        {"role": "user", "content": "A better mutual understanding. We both would be open and honest in how we communicate, and able to talk about most anything related to the work and how it is done."},
+        {"role": "assistant", "content": "When you think about starting this conversation, what are you most curious or concerned about as you approach it?"}
+      ],
+      "turns": ["Probably how to open the conversation.", "I don't have an opening in mind. Could you give me a short example I could adapt? I'm only preparing, not deciding to do it yet."],
+      "expectation": "Locally reconstructed pivotal replay. Recognize the established purpose and immediate opening-help need. Explore the user's own opening idea or provide brief adaptable preparation. No repeated outcomes/awkwardness interrogation and no invented promise to act."
+    },
+    {
+      "id": "natural_understanding",
+      "turns": ["My colleague said my handovers miss the decision owner. I want each handover to name who decides. I'm exploring ways to express that, not committing to a new process.", "The issue is clarity about who decides, not that my colleague is unhelpful. Could we practice a simple sentence for a handover?"],
+      "expectation": "Recognize shared understanding demonstrated through the user's own distinction. Help with requested practice without demanding a ritual yes or promoting a process commitment."
+    },
+    {
+      "id": "practice_while_unready",
+      "turns": ["My director gave me conflicting deadlines. I want to understand which takes priority, but I am not ready to have that conversation yet.", "I can see that I need a priority decision rather than reassurance about my ability. I'm still not ready to speak to her, but can we practice an opening?", "That sentence helps me prepare. I have not decided whether or when to use it."],
+      "expectation": "Permit explicitly requested preparation after natural understanding. Keep the real conversation unready, prospective and under the same action ID. Never equate practice or positive feedback with commitment or changed readiness to act."
+    },
+    {
+      "id": "preparation_refusal",
+      "turns": ["I feel uneasy about discussing a mistake with a peer. I do not want wording, rehearsal, or a plan. I only want to understand why I feel responsible for everything.", "Please don't return to practicing a conversation. My concern is the responsibility I take on."],
+      "expectation": "Preserve a preparation/topic boundary and explore the user's stated concern. Do not repackage the declined practical recommendation."
+    },
+    {
+      "id": "compatible_then_material_update",
+      "turns": ["I want to stop treating every disagreement as proof I failed. The evidence is that my peer asked for one missing figure, not that she rejected my work.", "Yes, that is the distinction. One more detail: the figure was from last quarter.", "I need to correct that picture: she explicitly said the whole proposal was unusable, not just that a figure was missing."],
+      "expectation": "Preserve compatible shared understanding through an incidental detail. Material contradictory evidence must revise the affected picture without defensiveness or preserving the earlier interpretation as fact."
+    }
+  ]
+}
