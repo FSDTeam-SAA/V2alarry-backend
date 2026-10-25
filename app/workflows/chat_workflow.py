@@ -54,9 +54,9 @@ Coaching approach:
 9. Recognize the level of the leader's answer: action, feeling, role label, contribution, or commitment. Deepen only when another level would materially improve agency; a practical answer is not automatically shallow or incomplete.
 10. When the leader is productively generating insight or commitment language, reduce coach content and use a minimal prompt so they can continue in their own words.
 11. Teach only when discovery has exposed a specific, relevant knowledge gap. Keep teaching concise, connect it to the leader's real situation, then return ownership and test what landed.
-12. When the leader corrects Jess or describes harm from a prior intervention, receive the impact without defensiveness, acknowledge and repair the miss, update the working picture, and re-enter discovery.
+12. When the leader corrects Jess or describes harm from a prior intervention, receive the impact without defensiveness, acknowledge and repair the miss, and revise the affected picture. Compatible additions do not require restarting discovery.
 Consider why new information matters for this client: role, relationships, trust, authority, experience, risk, prior attempts, and available agency. An ambitious goal does not imply something is broken. Treat possible loss of usefulness tentatively; check or shift the conversation without labeling the client. Reflect selectively, with accurate specifics, rather than repeating every answer.
-Steward the conversation while leaving discoveries, choices, and actions with the client. When an inquiry yields little new understanding, become curious about a relevant unexplored part of the situation rather than repeating the same question or making the client direct the conversation. Preserve their established purpose. Not knowing an answer does not imply reluctance or unreadiness. Do not offer a pause merely because an inquiry stalls; respect the client's actual request to pause or end.
+Steward the conversation while leaving discoveries, choices, and actions with the coaching user. Shared understanding can emerge naturally through their application and refinement; do not require explicit confirmation at every step. When a useful picture needs review, offer it back briefly. When a question adds little, synthesize or support a user-owned possibility if useful, or explore one material unknown. Practical preparation and practice do not mean commitment to act. A user may practice while unready for the real action; preserve boundaries against preparation or discussion. Keep the established purpose and avoid repeated outcome/readiness questions. Not knowing does not imply reluctance. Do not offer a pause merely because inquiry stalls; respect an actual request to stop.
 
 Knowledge and sources:
 13. Prefer the curated leadership knowledge sources provided with the request for frameworks and factual claims. Cite a source as [Source N: filename] only when you use that source.
@@ -215,7 +215,7 @@ class WorkflowNodes:
         state["metadata"]["coaching_stage"] = decision.coaching_stage
         state["metadata"]["next_coaching_move"] = decision.next_coaching_move
         state["decision_trace"] = {
-            "version": "calibration-4",
+            "version": "calibration-5",
             "model": settings.LLM_MODEL,
             "system_prompt_hash": hashlib.sha256(LEADERSHIP_COACH_SYSTEM_PROMPT.encode()).hexdigest()[:16],
             "working_state_prompt_hash": hashlib.sha256(EVIDENCE_EXTRACTION_PROMPT.encode()).hexdigest()[:16],
@@ -241,6 +241,18 @@ class WorkflowNodes:
             "action_context": [item.model_dump() for item in decision.action_context],
             "requested_support": decision.requested_support,
             "support_action_id": decision.support_action_id,
+            "progress_assessment": decision.progress_assessment.model_dump() if decision.progress_assessment else None,
+            "support_assessment": decision.support_assessment.model_dump() if decision.support_assessment else None,
+            "understanding_context": decision.understanding_context.model_dump() if decision.understanding_context else None,
+            "policy_reason_codes": CoachingPolicyService.decision_reasons(working_state, decision),
+            "evidence_changes": {
+                field: {
+                    "added": [item for item in getattr(decision, field)
+                              if item not in state.get("previous_working_state", {}).get(field, [])][:5],
+                    "removed": [item for item in state.get("previous_working_state", {}).get(field, [])
+                                if item not in getattr(decision, field)][:5],
+                } for field in ("reported_facts", "observations", "prior_attempts", "emerging_agency")
+            },
         }
         state["coaching_context"] = self._build_coaching_context(
             relevant_summaries=state.get("retained_summaries", []),

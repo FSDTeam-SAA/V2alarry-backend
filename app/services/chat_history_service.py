@@ -148,7 +148,8 @@ class ChatHistoryService:
                 # Turn-scoped assessments live in the linked trace, not durable client state.
                 durable_state = {key: value for key, value in working_state.items()
                                  if key not in {"focus_assessment", "interaction_assessment", "inquiry_assessment",
-                                                "action_updates", "requested_support", "support_action_id"}}
+                                                "action_updates", "requested_support", "support_action_id",
+                                                "progress_assessment", "support_assessment"}}
                 state_result = await db.execute(
                     select(CoachingWorkingState).where(
                         CoachingWorkingState.conversation_id == conv_uuid
