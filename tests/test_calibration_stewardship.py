@@ -126,7 +126,7 @@ class InquiryAssessmentBoundaryTests(unittest.IsolatedAsyncioTestCase):
             "user_id": "7", "message": "Not really", "working_state": stalled_state().model_dump(),
             "metadata": {"working_state_status": "updated"},
         })
-        self.assertEqual(result["decision_trace"]["version"], "calibration-4")
+        self.assertEqual(result["decision_trace"]["version"], "calibration-5")
         self.assertEqual(result["decision_trace"]["inquiry_assessment"]["progress"], "stalled")
         self.assertEqual(result["decision_trace"]["proposed_move"], "explore_readiness")
         self.assertEqual(result["decision_trace"]["enforced_move"], "shift_focus")
