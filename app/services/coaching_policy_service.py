@@ -81,32 +81,48 @@ class CoachingPolicyService:
                 normalized_state, stage="discovery", move="explore_readiness",
                 unknowns=unknowns,
             )
+        relevant_actions = [item for item in normalized_state.action_context
+                            if not normalized_state.support_action_id or item.id == normalized_state.support_action_id]
+        if any(item.discussion_declined for item in relevant_actions):
+            return cls._downgrade(normalized_state, stage="discovery", move="shift_focus", unknowns=unknowns)
         practical_help = normalized_state.requested_support in {"action_wording", "action_planning", "rehearsal"}
         practical_move = normalized_state.coaching_stage == "action" or normalized_state.next_coaching_move == "support_choice" or (
             normalized_state.next_coaching_move == "teach_selectively"
             and normalized_state.requested_support != "conceptual_explanation"
         )
         support = normalized_state.support_assessment
+        if (normalized_state.coaching_stage == "action" and support
+                and support.scope == "execution" and not support.permitted):
+            normalized_state = cls._downgrade(normalized_state, stage="possibilities",
+                                             move="reflect", unknowns=unknowns)
+            practical_move = False
         preparing = bool(support and support.permitted and support.scope == "preparation" and shared)
+        nonexecuting_support = bool(support and support.permitted
+                                    and support.scope in {"exploration", "preparation"} and shared)
         preparation_requested = preparing or (practical_help and (not support or support.scope != "execution"))
         blocked_actions = [item for item in normalized_state.action_context
                            if (item.readiness in {"not_ready", "declined"} or item.status == "abandoned"
                                or item.discussion_declined or (preparation_requested and item.preparation_declined))
                            and (not normalized_state.support_action_id or item.id == normalized_state.support_action_id)]
-        if preparing and normalized_state.coaching_stage == "action":
-            # Permission to prepare never authorizes an execution/commitment stage.
+        if nonexecuting_support and normalized_state.coaching_stage == "action":
+            # Exploration or preparation never authorizes execution/commitment.
             normalized_state = normalized_state.model_copy(update={"coaching_stage": "possibilities",
                                                                   "next_coaching_move": "support_choice"})
         blocking = [item for item in blocked_actions if not (
-            preparing and not item.preparation_declined and not item.discussion_declined
+            nonexecuting_support and not (preparation_requested and item.preparation_declined)
+            and not item.discussion_declined
             and (item.boundary_scope == "action" or (
                 item.boundary_scope == "unknown" and support.boundary_scope == "action")) and item.status != "abandoned"
             and normalized_state.coaching_stage != "action")]
         if blocking and (practical_help or practical_move):
+            feedback_repair = bool(inquiry and inquiry.progress == "stalled") or client_response in {
+                "corrected", "not_ready", "declined",
+            }
             return cls._downgrade(
                 normalized_state, stage="discovery",
                 move="shift_focus" if inquiry and inquiry.progress == "stalled" else "explore_readiness",
                 unknowns=cls._with_unknowns(unknowns, "readiness"),
+                transition_basis="client_feedback_reopened_discovery" if feedback_repair else "policy_downgrade",
             )
         if normalized_state.next_coaching_move in {"support_choice", "close_or_continue"}:
             material_unknown = bool(progress and progress.material_unknown)
@@ -410,11 +426,18 @@ class CoachingPolicyService:
         if decision.progress_assessment and decision.progress_assessment.understanding_effect == "retain":
             feedback_guidance = " Preserve the established picture; this detail extends it without requiring another confirmation."
         if decision.next_coaching_move == "support_choice":
-            guidance = (
-                "Support the coaching user's own possibility. If they need wording or practice, offer one brief "
-                "adaptable example or rehearse with them. Preparation is not a commitment to act. "
-                "Use what is already understood instead of asking again for the outcome, feelings or readiness."
-            )
+            if decision.support_assessment and decision.support_assessment.scope == "preparation":
+                guidance = (
+                    "Support the coaching user's own possibility. If they need wording or practice, offer one brief "
+                    "adaptable example or rehearse with them. Preparation is not a commitment to act. "
+                    "Use what is already understood instead of asking again for the outcome, feelings or readiness."
+                )
+            else:
+                guidance = (
+                    "Explore the coaching user's own possibility and what it means to them. "
+                    "Exploration permission does not authorize wording, rehearsal or an action plan. "
+                    "Keep any real action uncommitted unless the coaching user chooses it."
+                )
             feedback_guidance = " Shared understanding is supported by the dialogue; no confirmation ritual is required."
         elif decision.next_coaching_move == "close_or_continue":
             guidance = (
@@ -456,9 +479,11 @@ class CoachingPolicyService:
             "An abandoned action must not be proposed again unless the client reopens it. "
             "Narrative facts alone do not establish implementation when action status is unconfirmed."
         )
-        if any(item.readiness in {"not_ready", "declined"} for item in decision.action_context):
+        relevant_actions = [item for item in decision.action_context
+                            if not decision.support_action_id or item.id == decision.support_action_id]
+        if any(item.readiness in {"not_ready", "declined"} for item in relevant_actions):
             action_guidance += (
-                " A wording request does not establish readiness to act. Respect the specific scope of each action boundary. Requested preparation may be permitted while "
+                " A wording request does not establish readiness to act. Respect the specific scope of each action boundary. Requested exploration or preparation may be permitted while "
                 "the real action remains not ready; do not schedule, recommend carrying it out, or record a commitment. "
                 "A preparation/topic refusal still blocks that help. If scope is unclear, ask one relevant clarification. "
                 "Do not repeat a readiness question or propose a declined action in new words."
@@ -467,6 +492,12 @@ class CoachingPolicyService:
             action_guidance += (
                 " Respect refusals of preparation or discussion within their stated scope. "
                 "Refusing rehearsal does not imply unreadiness for an independently chosen real action."
+            )
+        if any(item.discussion_declined for item in relevant_actions):
+            guidance = (
+                "Respect the refusal to discuss this topic. Acknowledge it briefly and follow a different "
+                "coaching-user-owned concern if useful. Do not teach, rehearse, or ask why they are not ready "
+                "to discuss the refused topic."
             )
         return (
             f"Current coaching stage: {decision.coaching_stage}. "

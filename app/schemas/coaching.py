@@ -195,11 +195,12 @@ class ActionContextUpdate(BaseModel):
     actor: str = Field(min_length=1, max_length=100)
     action: str = Field(min_length=1, max_length=500,
         description="The action the client actually describes, never an inferred opposite or goal. 'I keep reviewing their work' describes reviewing their work, NOT stopping it. Do not invent a contemplated action from a concern. For an existing record copy its exact action; wording/preparation refers to that underlying action.")
-    status: ActionStatus | None = None
+    status: ActionStatus | None = Field(default=None,
+        description="Real action lifecycle only. Must be null for preparation/topic permission updates; practice permission cannot establish a planned action.")
     readiness: ActionReadiness | None = Field(default=None,
-        description="Unknown unless the coaching user actually expresses willingness, unreadiness or refusal about doing this action. Awkwardness/anxiety alone, missing information or ability, and requested practice are NOT readiness statements. Ready requires readiness_confirmation and client evidence; an intention alone leaves readiness unknown.")
+        description="Willingness/unreadiness/refusal within boundary_scope. For action/null scope this concerns performing the real action; preparation/topic changes only that permission. Awkwardness/anxiety alone and missing information/ability are not refusal. Ready requires readiness_confirmation and client evidence; intention or practice alone does not establish readiness to act.")
     basis: Literal["consideration", "intention", "reported_action", "readiness_boundary", "readiness_confirmation", "information_limit", "correction"] = Field(
-        description="information_limit means missing information, examples, resources or ability, not unwillingness; these updates cannot establish action/readiness. readiness_boundary requires actual unwillingness, discomfort or refusal. EVERY ready update requires readiness_confirmation. Intention alone cannot support ready; do not invent a narrower action.")
+        description="information_limit means missing information/examples/resources/ability, not unwillingness; these updates cannot establish action/readiness. readiness_boundary requires expressed unreadiness or refusal within the stated scope; discomfort alone is insufficient. EVERY ready update requires readiness_confirmation. Intention alone cannot support ready; do not invent a narrower action.")
     evidence: list[EvidenceReference] = Field(min_length=1, max_length=3)
     boundary_scope: BoundaryScope | None = Field(default=None,
         description="action: willingness to do it, preparation: willingness for wording/practice, topic: willingness to discuss, unknown: ambiguous. For preparation/topic, readiness updates only that permission, never readiness to act. Ready with readiness_confirmation lifts that scoped refusal. Awkwardness alone is not unwillingness.")

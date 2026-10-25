@@ -53,7 +53,7 @@ Use HARVEST -> CLASSIFY -> UPDATE -> HOLD -> ASSESS:
 - Assess interaction usefulness only against the latest_assistant_response and current client reply. If applicable, supply interaction_assessment with usefulness unknown, helpful, or possibly_unhelpful, a tentative observation, and an exact current_message excerpt. A short acknowledgment alone is not proof of agreement, readiness, disengagement, or commitment. Consider the prior invitation, ambiguity, uncertainty, and the client's own language together. No keyword or phrase automatically chooses a move.
 - If Jess's trail may be unhelpful, check usefulness, test a tentative understanding, invite desired help, or shift focus gently. Distinguish this uncertainty from explicit correction or refusal. Do not repeat advice or decide which of Jess's suggestions the client should adopt. New facts reopen discovery only when they materially change understanding, not merely because the client answered a question.
 - Preserve valid prior facts and attempts; replace only what the client corrects or supersedes. Use recent_history to recover missed evidence while respecting corrections. Never blindly merge conflicting claims. Keep assessments turn-scoped and avoid permanent client characterization.
-- Recompute essential_unknowns from current evidence: remove what the client has now resolved. Do not preserve stale unknowns or ask for every possible detail before helping. Ordinary answers to a discovery question are not automatically refined/corrected; reserve those labels for updates that revise the working understanding. If the client reports a specific relevant knowledge gap and asks to learn, record knowledge_gap_observed in transition_basis and select teach_selectively. If the client clearly chooses their own outcome, record user_owned_outcome. An intention for a future experiment is not a prior_attempt. Record tested_understanding only when the client has confirmed the current understanding, never just because Jess made a suggestion. Favor test_understanding when a useful picture has emerged so the conversation can progress instead of staying in clarification forever.
+- Recompute essential_unknowns from current evidence: remove what the client has now resolved. Do not preserve stale unknowns or ask for every possible detail before helping. Ordinary answers to a discovery question are not automatically refined/corrected; reserve those labels for updates that revise the working understanding. If the client reports a specific relevant knowledge gap and asks to learn, record knowledge_gap_observed in transition_basis and select teach_selectively. If the client clearly chooses their own outcome, record user_owned_outcome. An intention for a future experiment is not a prior_attempt. Shared understanding requires meaningful client confirmation or natural application/refinement in context, never merely a suggestion or acknowledgment. Use test_understanding when a useful picture needs review; do not require explicit confirmation as a routine checkpoint.
 - Do not diagnose, invent events, infer protected traits, or make a clue permanent.
 """
 
@@ -63,6 +63,7 @@ Return only a JSON object matching the requested schema. Use the prior summary, 
 """
 SUMMARY_PROMPT += """
 For commitment_change and next_experiment_change, explicitly choose preserve, replace, or clear independently. Default to preserve. For any change, copy previous_value exactly from that field of previous_summary (null if absent) and cite exact current_message client evidence with null index. A replacement requires client-chosen action and all action permission gates; a suggestion or considering an action is insufficient. To clear, the client must explicitly withdraw/abandon that SAME action: select its action_context id with status abandoned and use its current client evidence. Lack of readiness alone is not abandonment. Clear the affected old commitment/experiment even in discovery, without replacing it or clearing unrelated commitments. Do not copy revision directives into stored prose or reinterpret a correction about something else as cancellation.
+For replacements in the current assessment path, include the matching planned/ongoing action_context ID. It must match support_action_id when one is selected. Permission for one chosen action cannot authorize a commitment to another considered or practice-only direction. Retain exact current client evidence for that choice.
 """
 
 SUMMARY_RETRIEVAL_PROMPT = """You select relevant coaching continuity summaries for a new conversation.
@@ -121,6 +122,7 @@ Classify requested_support as none, exploration, conceptual_explanation, action_
 ACTION_EVIDENCE_GUIDANCE_CYCLE5 = """
 Record boundary_scope only for a genuine boundary: action means not ready/willing to perform it, preparation means refusing wording/rehearsal/planning, topic means refusing discussion, unknown means ambiguous. With no boundary leave scope null. Updates to scope require current client evidence and basis readiness_boundary, readiness_confirmation or correction. Keep action scope on an actual meeting refusal even when the user asks to rehearse: the rehearsal request is NOT an action/readiness update. If an existing boundary's saved evidence clearly concerns only doing the action, classify its scope from that evidence during assessment without changing the saved readiness. A new scope update still needs current evidence. Never infer a preparation refusal from inability to find wording.
 For a preparation/topic boundary update, readiness declined/not_ready records only that refusal; ready with readiness_confirmation and explicit changed-permission evidence lifts only that refusal. The server preserves readiness for performing the underlying action independently. Do not update status merely because preparation permission changes. An unchanged practice request needs no update unless it explicitly lifts an existing refusal.
+When multiple independent permissions change together, provide at most one update per scope (action, preparation, topic) for the same underlying action. Reuse its existing ID; for a new action use identical actor/action in the scoped updates and null IDs so the server assigns one ID. Preparation/topic updates MUST leave status null. Readiness in a preparation/topic update concerns only that scoped permission; it never reports implementation or intention to perform the real action. Conflicting updates to the same scope must be resolved against the current client correction, not emitted twice.
 """
 EVIDENCE_EXTRACTION_PROMPT += ACTION_EVIDENCE_GUIDANCE_CYCLE5
 WORKING_STATE_PROMPT += ACTION_EVIDENCE_GUIDANCE_CYCLE5
@@ -130,6 +132,7 @@ Supply progress_assessment on every substantive turn: established points, at mos
 understanding_effect establish requires understanding_assessment with a concise picture, basis explicit or natural, and evidence_ids. Natural means the coaching user meaningfully applies, develops, or corrects an emerging understanding in context. Mere acknowledgment, silence, or absence of correction is NOT enough. The initial presentation alone normally supplies facts, not proof of a mutually shared picture. If their own explanation develops a clear distinction in context, do not demand that they answer 'is that right?' as a ritual. Use retain only if previous_state.understanding_context is supported and the new reply is compatible; copy no new understanding_assessment. A detail or 'yes, and' does not automatically invalidate the picture. Use revise for material contradiction and explore only what the correction changes. Use unknown when no shared picture is established and omit understanding_assessment. A legacy tested_understanding flag alone is insufficient for retain; use actual evidence to establish a picture if possible.
 Supply support_assessment when considering practical help: scope exploration, preparation or execution, permitted, reason and independent evidence_ids for the user's requested help or owned direction. Distinguish requesting help from willingness to act. In possibilities, support_choice can explore the user's idea, help prepare an opening or practice a short adaptable sentence without committing. If the user cannot generate an opening and requests help, one brief example is useful; do not keep asking them to imagine the same outcome. For an action-only not_ready boundary, explicit requested preparation is permitted without changing real-action readiness or status. Preparation/topic refusal, abandonment, and explicit stopping still prevail. If the actual boundary scope is ambiguous, clarify once instead of treating awkwardness as refusal.
 Use test_understanding to assemble a useful picture and invite review when needed, including after a repetitive inquiry. Use support_choice when a shared picture and specific permission support preparation/exploration; choose possibilities, not action. Use close_or_continue to consolidate useful learning or a possible path and naturally check whether anything else would help; not merely because a question stalled. Execution and consolidate_commitment require an actual user choice, never a preparation request. Specific conceptual teaching uses the existing teach_selectively gate, not support_choice as a way to lecture. Give productive insight room. Keep output concise, with short decision summaries, not hidden reasoning.
+An action-only boundary also permits specifically requested exploration without readiness to act. Refusing rehearsal does not prohibit exploring the possibility when discussion remains welcome. Exploration permission does not authorize wording, rehearsal, or execution. Link explanations to support_action_id when a topic refusal applies; respect that refusal across conceptual as well as practical help. A denied execution permission must not consolidate a commitment.
 """
 
 
@@ -280,30 +283,41 @@ class CoachingMemoryService:
     def _merge_action_context(previous: CoachingWorkingState, extracted: CoachingWorkingState,
                               message: str, history: list[dict]) -> list[ClientActionContext]:
         actions = {item.id: item for item in previous.action_context}
-        updated_ids: set[str] = set()
+        updated_scopes: dict[str, set[str]] = {}
+        created_ids: set[str] = set()
         for update in extracted.action_updates:
             old = actions.get(update.id) if update.id else None
-            if update.id and (old is None or update.id in updated_ids):
+            scope = update.boundary_scope if update.boundary_scope in {"preparation", "topic"} else "action"
+            if update.id and old is None:
                 raise WorkingStateExtractionError("unsupported_action")
             if update.basis == "information_limit":
                 # Unavailable information says nothing about willingness or action status.
-                if old:
-                    updated_ids.add(old.id)
                 continue
+            if not update.id:
+                match = next((item for item in actions.values()
+                              if item.actor == update.actor and item.action == update.action), None)
+                if match:
+                    if match.id not in created_ids:
+                        raise WorkingStateExtractionError("duplicate_action")
+                    old = match
+            if old and scope in updated_scopes.get(old.id, set()):
+                raise WorkingStateExtractionError("unsupported_action")
+            if scope != "action" and update.status is not None:
+                # Permission for practice/discussion cannot change the real action lifecycle.
+                raise WorkingStateExtractionError("unsupported_action_status")
             if (old and update.actor == old.actor and update.action == old.action
                     and update.status in {None, old.status} and update.readiness in {None, old.readiness}
                     and update.boundary_scope not in {"preparation", "topic"}
                     and update.boundary_scope in {None, old.boundary_scope}):
                 # Retaining a fact does not authorize replacing its original client evidence.
-                updated_ids.add(old.id)
+                updated_scopes.setdefault(old.id, set()).add(scope)
                 continue
-            if not update.id and any(item.actor == update.actor and item.action == update.action for item in actions.values()):
-                raise WorkingStateExtractionError("duplicate_action")
             excerpts = []
             for ref in update.evidence:
                 if ref.source == "current_message" and ref.index is None:
                     text = message
-                elif ref.source == "history" and not old and ref.index is not None and ref.index < len(history):
+                elif (ref.source == "history" and not update.id and (not old or old.id in created_ids)
+                      and ref.index is not None and ref.index < len(history)):
                     entry = history[ref.index]
                     text = entry.get("content", "") if entry.get("role") == "user" else ""
                 else:
@@ -324,6 +338,8 @@ class CoachingMemoryService:
             if old and (update.actor != old.actor or update.action != old.action) and update.basis != "correction":
                 raise WorkingStateExtractionError("unsupported_action")
             action_id = old.id if old else str(uuid4())
+            if not old:
+                created_ids.add(action_id)
             scoped_permission = update.boundary_scope in {"preparation", "topic"}
             readiness = (old.readiness if old else "unknown") if scoped_permission else (
                 update.readiness or (old.readiness if old else "unknown"))
@@ -351,7 +367,7 @@ class CoachingMemoryService:
                     if update.boundary_scope == "topic" and update.readiness not in {None, "unknown"}
                     else old.discussion_evidence if old else None),
             )
-            updated_ids.add(action_id)
+            updated_scopes.setdefault(action_id, set()).add(scope)
         if len(actions) > 10:
             raise WorkingStateExtractionError("action_context_capacity")
         return list(actions.values())
@@ -568,6 +584,10 @@ class CoachingMemoryService:
                     raise WorkingStateExtractionError("unsupported_summary_change")
             elif getattr(revision, field) is None:
                 raise WorkingStateExtractionError("unsupported_summary_change")
+            elif working_state.progress_assessment and CoachingPolicyService.action_is_permitted(working_state):
+                if (not action or action.status not in {"planned", "ongoing"}
+                        or (working_state.support_action_id and action.id != working_state.support_action_id)):
+                    raise WorkingStateExtractionError("unsupported_summary_change")
         candidate = CoachingSummaryData.model_validate(revision.model_dump(exclude={"commitment_change", "next_experiment_change"}))
         return self._apply_retention_gate(
             previous_summary=previous_summary,
