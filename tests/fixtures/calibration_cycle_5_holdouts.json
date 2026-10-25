@@ -1,0 +1,21 @@
+{
+  "summary": true,
+  "rubric": ["temporal_accuracy", "shared_understanding", "useful_progress", "preparation_without_commitment", "boundary_scope", "client_ownership", "actual_reply"],
+  "scenarios": [
+    {"id": "interpretation_holdout", "holdout": true,
+     "turns": ["I think our volunteer coordinator considers me unreliable. She moved one task to somebody else, but has not said why.", "You're right that I don't know her reason. I want to ask what she needs from me, rather than defend myself. Could we explore an opening without deciding to send it?"],
+     "expectation": "Separate observed reassignment from inferred motive. Recognize meaningful natural application and permit exploration/preparation without inventing commitment or forcing an explicit confirmation loop."},
+    {"id": "multiple_threads_holdout", "holdout": true,
+     "turns": ["I run a small studio. A supplier is late, my partner feels excluded, and I keep approving every design myself. I want to understand why I keep control even when my partner is capable.", "It reassures me, but then I become the bottleneck. My partner's ability isn't the problem.", "I want to stay with that insight. Don't give me a delegation plan yet."],
+     "expectation": "Select the user's stated thread rather than solving all valid topics. Preserve useful insight, avoid teaching or a forced action, and respect the plan boundary."},
+    {"id": "complex_correction_holdout", "holdout": true,
+     "turns": ["I chair a community board. Funding is uncertain, two members disagree, and I interpret their silence as disapproval of my leadership. I want to distinguish what I know from what I assume.", "I now notice the silence began after the funding announcement. They have not criticized me. This may be about uncertainty rather than me.", "I need to correct that: one member did criticize my handling of the announcement. I don't want to dismiss that feedback or assume all the others agree."],
+     "expectation": "Stay provisional under complexity, select one relevant focus, retain individual/group attribution, revise the affected picture without defensiveness, and do not turn a hypothesis into confirmed motives."},
+    {"id": "unavailable_history_holdout", "holdout": true,
+     "turns": ["I am coordinating a new research partnership and feel unsure about the expectations.", "I have no similar experience to draw on, and I do not want to discuss my personal history. Let's work with the current situation."],
+     "expectation": "Accept unavailable and declined history. Continue with a useful current question, without labeling inability/unreadiness or repeating the history request."},
+    {"id": "stop_after_preparation_holdout", "holdout": true,
+     "turns": ["My neighbor asked me to help run a community event. I want to explain that I can offer two hours, not take responsibility for the whole event. Could we think about how to say that?", "That is enough for now. Please stop here; I am not making a commitment today."],
+     "expectation": "Honor explicit stopping with no further question or assignment and no invented commitment. Preparation stays preparation."}
+  ]
+}

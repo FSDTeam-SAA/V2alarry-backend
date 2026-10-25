@@ -65,19 +65,31 @@ async def verify(url: str, output: Path, serve_port: int = 0, live_model: bool =
             if issubclass(schema, CoachingTurnAssessment):
                 wording = "How would I open that meeting?" == payload["new_user_message"]
                 actions = payload["extracted_state"].get("action_context", [])
+                previous = payload["previous_state"].get("understanding_context")
+                continuing = bool(payload.get("latest_assistant_response"))
                 return CoachingTurnAssessment(
                     focus_assessment={"focus": "Client's desired clarity", "reason": "Client wants to think clearly",
                         "evidence_ids": ["current_message"]},
                     interaction_assessment=None,
                     inquiry_assessment={"progress": "advancing", "reason": "Client is clarifying their purpose",
                                         "client_requested_pause": False},
-                    coaching_stage="discovery", next_coaching_move="teach_selectively" if wording else "explore_desired_help",
+                    coaching_stage="possibilities" if wording else "discovery",
+                    next_coaching_move="support_choice" if wording else "explore_desired_help",
                     client_response_to_last_move="not_applicable", client_generation="emerging",
-                    essential_unknowns=["desired_help"], transition_basis=["grounded_evidence"],
-                    knowledge_gap_observed=wording, user_owned_outcome=False, tested_understanding=False,
-                    transition_evidence_ids=["current_message"] if wording else [],
+                    essential_unknowns=[] if wording else ["desired_help"], transition_basis=["grounded_evidence"],
+                    knowledge_gap_observed=False, user_owned_outcome=False, tested_understanding=False,
+                    transition_evidence_ids=[],
                     requested_support="action_wording" if wording else "exploration",
                     support_action_id=actions[0]["id"] if wording else None,
+                    progress_assessment={"established": ["The user wants clarity before deciding on action"],
+                        "material_unknown": None, "discovery_useful": not wording,
+                        "understanding_effect": "retain" if previous else "establish" if continuing else "unknown",
+                        "recommended_direction": "support" if wording else "discovery",
+                        "reason": "Separate clarity, preparation and action", "evidence_ids": ["current_message"]},
+                    understanding_assessment={"picture": "The user wants clarity about priorities before deciding how to approach the boss",
+                        "basis": "natural", "evidence_ids": ["current_message"]} if continuing and not previous else None,
+                    support_assessment={"scope": "preparation", "permitted": True,
+                        "reason": "The user requests an opening, without commitment", "evidence_ids": ["current_message"]} if wording else None,
                 )
             if schema is CoachingEvidenceState:
                 message = payload["new_user_message"]
@@ -89,6 +101,7 @@ async def verify(url: str, output: Path, serve_port: int = 0, live_model: bool =
                         "status": "abandoned" if "decided to abandon" in message else "considering",
                         "readiness": None if "decided to abandon" in message else "not_ready",
                         "basis": "reported_action" if "decided to abandon" in message else "readiness_boundary",
+                        "boundary_scope": None if "decided to abandon" in message else "action",
                         "evidence": [{"source": "current_message", "excerpt": message}]}]
                 return CoachingEvidenceState(reported_facts=["The client can negotiate priorities"], action_updates=updates)
             if schema is CoachingSummaryRevision:
@@ -167,7 +180,8 @@ async def verify(url: str, output: Path, serve_port: int = 0, live_model: bool =
     app = FastAPI()
     if serve_port:
         from fastapi.middleware.cors import CORSMiddleware
-        app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:3330", "http://127.0.0.1:3330"],
+        app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:3330", "http://127.0.0.1:3330",
+                                                       "http://localhost:3331", "http://127.0.0.1:3331"],
                            allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
     app.include_router(chat_module.router, prefix="/api/v1")
     checks = {}
@@ -217,11 +231,13 @@ async def verify(url: str, output: Path, serve_port: int = 0, live_model: bool =
                 response = await client.post("/api/v1/chat/", headers=headers,
                     json={"message": message, "conversation_id": conversation_id})
                 assert response.status_code == 200, response.text
-            assert response.json()["metadata"]["next_coaching_move"] in {"explore_readiness", "shift_focus", "deepen", "clarify", "test_understanding"}
+            assert response.json()["metadata"]["next_coaching_move"] == "support_choice"
             boundary_state = await ChatHistoryService().get_working_state(conversation_id=conversation_id, user_id=str(user_ids[0]))
             assert any(item["readiness"] == "not_ready" for item in boundary_state.state["action_context"])
             checks["action_boundary_resume"] = True
-            checks["readiness_before_wording"] = True
+            assert boundary_state.state["understanding_context"]["status"] == "supported"
+            assert all(item["status"] != "planned" for item in boundary_state.state["action_context"])
+            checks["preparation_without_commitment"] = True
             response = await client.post("/api/v1/chat/", headers=headers, json={
                 "message": "I have decided to abandon that meeting request. I no longer want to do it.", "conversation_id": conversation_id})
             assert response.status_code == 200, response.text
@@ -230,7 +246,8 @@ async def verify(url: str, output: Path, serve_port: int = 0, live_model: bool =
         saved = list((await db.execute(select(Message).where(Message.conversation_id == uuid_module.UUID(conversation_id)).order_by(Message.created_at))).scalars())
         assert len(saved) == 10
         for user, assistant in zip(saved[::2], saved[1::2]):
-            assert user.doc_metadata["coaching_trace"]["version"] == "calibration-4"
+            assert user.doc_metadata["coaching_trace"]["version"] == "calibration-5"
+            assert user.doc_metadata["coaching_trace"]["policy_reason_codes"]
             assert user.doc_metadata["assistant_message_id"] == str(assistant.id)
             assert assistant.doc_metadata["user_message_id"] == str(user.id)
             assert user.doc_metadata["turn_id"] == assistant.doc_metadata["turn_id"]
@@ -257,7 +274,7 @@ async def verify(url: str, output: Path, serve_port: int = 0, live_model: bool =
     # A new service reads persisted continuity rather than relying on an in-memory workflow.
     persisted = await ChatHistoryService().get_working_state(conversation_id=conversation_id, user_id=str(user_ids[0]))
     assert persisted.source_turn_count == 5
-    assert not {"focus_assessment", "interaction_assessment", "inquiry_assessment", "action_updates", "requested_support", "support_action_id"} & persisted.state.keys()
+    assert not {"focus_assessment", "interaction_assessment", "inquiry_assessment", "action_updates", "requested_support", "support_action_id", "progress_assessment", "support_assessment"} & persisted.state.keys()
     checks["state_resume"] = True
     from app.core.config import settings
     output.write_text(json.dumps({"checks": checks, "external_model": settings.LLM_MODEL if live_model else "doubled",
