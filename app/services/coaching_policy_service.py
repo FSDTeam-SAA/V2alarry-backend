@@ -33,10 +33,21 @@ class CoachingPolicyService:
             working_state.transition_basis
         )
         client_response = working_state.client_response_to_last_move
+        progress = working_state.progress_assessment
+        understanding = working_state.understanding_context
+        if progress and progress.understanding_effect == "revise":
+            understanding = understanding.model_copy(update={"status": "needs_revision"}) if understanding else None
+            transition_basis = [item for item in transition_basis if item != "tested_understanding"]
+            unknowns = cls._with_unknowns(unknowns, "tested_understanding")
+        shared = bool(understanding and understanding.status == "supported")
+        if shared:
+            transition_basis = cls._with_transition_basis(transition_basis, "tested_understanding")
+            unknowns = [item for item in unknowns if item != "tested_understanding"]
 
         if (
             working_state.last_coaching_move == "test_understanding"
             and client_response == "affirmed"
+            and progress is None
         ):
             transition_basis = cls._with_transition_basis(
                 transition_basis,
@@ -48,6 +59,7 @@ class CoachingPolicyService:
             update={
                 "essential_unknowns": unknowns,
                 "transition_basis": transition_basis,
+                "understanding_context": understanding,
             }
         )
 
@@ -69,25 +81,73 @@ class CoachingPolicyService:
                 normalized_state, stage="discovery", move="explore_readiness",
                 unknowns=unknowns,
             )
+        relevant_actions = [item for item in normalized_state.action_context
+                            if not normalized_state.support_action_id or item.id == normalized_state.support_action_id]
+        if any(item.discussion_declined for item in relevant_actions):
+            return cls._downgrade(normalized_state, stage="discovery", move="shift_focus", unknowns=unknowns)
         practical_help = normalized_state.requested_support in {"action_wording", "action_planning", "rehearsal"}
-        practical_move = normalized_state.coaching_stage == "action" or (
+        practical_move = normalized_state.coaching_stage == "action" or normalized_state.next_coaching_move == "support_choice" or (
             normalized_state.next_coaching_move == "teach_selectively"
             and normalized_state.requested_support != "conceptual_explanation"
         )
+        support = normalized_state.support_assessment
+        if (normalized_state.coaching_stage == "action" and support
+                and support.scope == "execution" and not support.permitted):
+            normalized_state = cls._downgrade(normalized_state, stage="possibilities",
+                                             move="reflect", unknowns=unknowns)
+            practical_move = False
+        preparing = bool(support and support.permitted and support.scope == "preparation" and shared)
+        nonexecuting_support = bool(support and support.permitted
+                                    and support.scope in {"exploration", "preparation"} and shared)
+        preparation_requested = preparing or (practical_help and (not support or support.scope != "execution"))
         blocked_actions = [item for item in normalized_state.action_context
-                           if (item.readiness in {"not_ready", "declined"} or item.status == "abandoned")
+                           if (item.readiness in {"not_ready", "declined"} or item.status == "abandoned"
+                               or item.discussion_declined or (preparation_requested and item.preparation_declined))
                            and (not normalized_state.support_action_id or item.id == normalized_state.support_action_id)]
-        if blocked_actions and (practical_help or practical_move):
+        if nonexecuting_support and normalized_state.coaching_stage == "action":
+            # Exploration or preparation never authorizes execution/commitment.
+            normalized_state = normalized_state.model_copy(update={"coaching_stage": "possibilities",
+                                                                  "next_coaching_move": "support_choice"})
+        blocking = [item for item in blocked_actions if not (
+            nonexecuting_support and not (preparation_requested and item.preparation_declined)
+            and not item.discussion_declined
+            and (item.boundary_scope == "action" or (
+                item.boundary_scope == "unknown" and support.boundary_scope == "action")) and item.status != "abandoned"
+            and normalized_state.coaching_stage != "action")]
+        if blocking and (practical_help or practical_move):
+            feedback_repair = bool(inquiry and inquiry.progress == "stalled") or client_response in {
+                "corrected", "not_ready", "declined",
+            }
             return cls._downgrade(
                 normalized_state, stage="discovery",
                 move="shift_focus" if inquiry and inquiry.progress == "stalled" else "explore_readiness",
                 unknowns=cls._with_unknowns(unknowns, "readiness"),
-                discard_transition_basis=("tested_understanding",),
+                transition_basis="client_feedback_reopened_discovery" if feedback_repair else "policy_downgrade",
             )
+        if normalized_state.next_coaching_move in {"support_choice", "close_or_continue"}:
+            material_unknown = bool(progress and progress.material_unknown)
+            if not shared or material_unknown or not (normalized_state.reported_facts or normalized_state.observations):
+                correction = bool(progress and progress.understanding_effect == "revise")
+                normalized_state = cls._downgrade(normalized_state,
+                    stage="discovery" if material_unknown or correction else "reflection",
+                    move="test_understanding" if not material_unknown else "clarify",
+                    unknowns=cls._with_unknowns(unknowns, "tested_understanding") if not shared else unknowns,
+                    transition_basis="client_feedback_reopened_discovery" if correction else "policy_downgrade")
+            elif normalized_state.next_coaching_move == "support_choice" and (
+                    not support or not support.permitted or support.scope == "execution"):
+                normalized_state = cls._downgrade(normalized_state, stage="possibilities", move="explore_options", unknowns=unknowns)
+            else:
+                return normalized_state.model_copy(update={"coaching_stage": "possibilities"})
+        synthesis_useful = normalized_state.next_coaching_move == "test_understanding" and (
+            (normalized_state.last_coaching_move != "test_understanding"
+             and client_response not in {"declined", "not_ready"})
+            or bool(progress and progress.recommended_direction == "synthesis"
+                    and progress.understanding_effect in {"establish", "revise"}))
         if (inquiry and inquiry.progress == "stalled"
                 and normalized_state.client_generation != "productive"
                 and client_response != "corrected"
                 and not teaching_repairs_inquiry
+                and not synthesis_useful
                 and bool(normalized_state.reported_facts or normalized_state.observations)):
             # Declining one unproductive question does not mean declining coaching.
             return cls._downgrade(
@@ -107,6 +167,8 @@ class CoachingPolicyService:
                 discard_transition_basis=("tested_understanding",),
             )
         if (client_response in cls._DISCOVERY_REOPENING_RESPONSES
+                and not (shared and progress and progress.understanding_effect in {"retain", "establish"}
+                         and client_response in {"refined", "new_evidence"})
                 and not (possibly_unhelpful and client_response in {"refined", "new_evidence"})):
             move: CoachingMove = (normalized_state.next_coaching_move
                                   if normalized_state.next_coaching_move in cls._DISCOVERY_MOVES else "clarify")
@@ -216,6 +278,13 @@ class CoachingPolicyService:
                 move="explore_options",
                 unknowns=unknowns,
             )
+
+        if normalized_state.coaching_stage == "action" and progress and not any(
+                item.status in {"planned", "ongoing"}
+                and (not normalized_state.support_action_id or item.id == normalized_state.support_action_id)
+                for item in normalized_state.action_context):
+            return cls._downgrade(normalized_state, stage="possibilities", move="explore_options",
+                                  unknowns=cls._with_unknowns(unknowns, "user_owned_outcome"))
 
         if (
             normalized_state.coaching_stage == "action"
@@ -354,6 +423,28 @@ class CoachingPolicyService:
                 "affirm, refine, correct, or add. Do not move to action until their response "
                 "supports it."
             )
+        if decision.progress_assessment and decision.progress_assessment.understanding_effect == "retain":
+            feedback_guidance = " Preserve the established picture; this detail extends it without requiring another confirmation."
+        if decision.next_coaching_move == "support_choice":
+            if decision.support_assessment and decision.support_assessment.scope == "preparation":
+                guidance = (
+                    "Support the coaching user's own possibility. If they need wording or practice, offer one brief "
+                    "adaptable example or rehearse with them. Preparation is not a commitment to act. "
+                    "Use what is already understood instead of asking again for the outcome, feelings or readiness."
+                )
+            else:
+                guidance = (
+                    "Explore the coaching user's own possibility and what it means to them. "
+                    "Exploration permission does not authorize wording, rehearsal or an action plan. "
+                    "Keep any real action uncommitted unless the coaching user chooses it."
+                )
+            feedback_guidance = " Shared understanding is supported by the dialogue; no confirmation ritual is required."
+        elif decision.next_coaching_move == "close_or_continue":
+            guidance = (
+                "Briefly consolidate the useful discovery or possible path, preserving uncertainty and action status. "
+                "Check naturally whether anything else would help now. Do not invent an assignment or commitment."
+            )
+            feedback_guidance = ""
 
         if (decision.interaction_assessment
                 and decision.interaction_assessment.usefulness == "possibly_unhelpful"):
@@ -388,13 +479,25 @@ class CoachingPolicyService:
             "An abandoned action must not be proposed again unless the client reopens it. "
             "Narrative facts alone do not establish implementation when action status is unconfirmed."
         )
-        if any(item.readiness in {"not_ready", "declined"} for item in decision.action_context):
+        relevant_actions = [item for item in decision.action_context
+                            if not decision.support_action_id or item.id == decision.support_action_id]
+        if any(item.readiness in {"not_ready", "declined"} for item in relevant_actions):
             action_guidance += (
-                " Respect the specific action boundaries in action_context: a wording request does not establish readiness. "
-                "Before wording, rehearsal, or planning for a blocked action, explore one genuinely unresolved aspect "
-                "of readiness, experience, confidence, or relationship. Do not ask again what the client already answered "
-                "or propose the same action in new words. Only explicit client evidence of changed readiness reopens it. "
-                "A specific conceptual explanation may still be earned without committing to that action."
+                " A wording request does not establish readiness to act. Respect the specific scope of each action boundary. Requested exploration or preparation may be permitted while "
+                "the real action remains not ready; do not schedule, recommend carrying it out, or record a commitment. "
+                "A preparation/topic refusal still blocks that help. If scope is unclear, ask one relevant clarification. "
+                "Do not repeat a readiness question or propose a declined action in new words."
+            )
+        if any(item.preparation_declined or item.discussion_declined for item in decision.action_context):
+            action_guidance += (
+                " Respect refusals of preparation or discussion within their stated scope. "
+                "Refusing rehearsal does not imply unreadiness for an independently chosen real action."
+            )
+        if any(item.discussion_declined for item in relevant_actions):
+            guidance = (
+                "Respect the refusal to discuss this topic. Acknowledge it briefly and follow a different "
+                "coaching-user-owned concern if useful. Do not teach, rehearse, or ask why they are not ready "
+                "to discuss the refused topic."
             )
         return (
             f"Current coaching stage: {decision.coaching_stage}. "
@@ -415,6 +518,19 @@ class CoachingPolicyService:
     @classmethod
     def action_is_permitted(cls, working_state: CoachingWorkingState) -> bool:
         return cls.enforce(working_state).coaching_stage == "action"
+
+    @staticmethod
+    def decision_reasons(proposed: CoachingWorkingState, decision: CoachingWorkingState) -> list[str]:
+        if proposed.inquiry_assessment and proposed.inquiry_assessment.client_requested_pause:
+            return ["explicit_stop"]
+        reasons = []
+        if decision.next_coaching_move == "support_choice":
+            reasons.append("shared_understanding_and_scoped_support")
+        if proposed.progress_assessment and proposed.progress_assessment.understanding_effect == "revise":
+            reasons.append("material_revision")
+        if proposed.next_coaching_move != decision.next_coaching_move or proposed.coaching_stage != decision.coaching_stage:
+            reasons.append("permission_downgrade")
+        return reasons or ["selected_move_permitted"]
 
     @staticmethod
     def _unique_unknowns(
@@ -452,6 +568,11 @@ class CoachingPolicyService:
         transition_basis: TransitionBasis = "policy_downgrade",
         discard_transition_basis: tuple[TransitionBasis, ...] = (),
     ) -> CoachingWorkingState:
+        if working_state.understanding_context and working_state.understanding_context.status == "supported":
+            # Repairing an invitation does not invalidate the supported picture.
+            discard_transition_basis = tuple(item for item in discard_transition_basis
+                                             if item != "tested_understanding")
+            unknowns = [item for item in unknowns if item != "tested_understanding"]
         retained_transition_basis = [
             item
             for item in working_state.transition_basis
