@@ -1,0 +1,78 @@
+{
+  "summary": true,
+  "rubric": ["client_ownership", "selective_confirmation", "useful_progress", "boundaries", "observations_interpretations", "client_takeaways_before_closure"],
+  "scenarios": [
+    {
+      "id": "sufficient_understanding",
+      "initial_history": [
+        {"role": "user", "content": "An employee stopped telling me about delays. I want a conversation where they feel able to explain what is happening. I am not looking to accuse them."},
+        {"role": "assistant", "content": "What would you want them to understand about your purpose?"}
+      ],
+      "turns": [
+        "I want to understand the delays together, rather than assume they are hiding something. That is the distinction I needed. How might I open that conversation?",
+        "I could begin by saying I want to understand what makes it hard to raise a delay. That sounds like my own voice."
+      ],
+      "expectation": "Build on natural understanding and draw out the client's own opening. Do not require an explicit confirmation ritual or supply a coach-written example. Do not assume the conversation happened or the client committed to it."
+    },
+    {
+      "id": "request_for_suggestion",
+      "initial_history": [
+        {"role": "user", "content": "I want to negotiate priorities with my manager rather than work more hours. The deadlines conflict, and I know which tasks can move."},
+        {"role": "assistant", "content": "What would you want from the conversation?"},
+        {"role": "user", "content": "A priority decision. I already said that."},
+        {"role": "assistant", "content": "What outcome would make the conversation useful?"}
+      ],
+      "turns": [
+        "I understand the situation, but I need one practical suggestion. You are repeating the same question.",
+        "I do not know where to start. That is why I asked."
+      ],
+      "expectation": "Acknowledge repetition and use the established priority dilemma to help the client think through a starting point. Draw out their thinking without Jess supplying a suggestion, repeating the desired outcome question, or offering to stop."
+    },
+    {
+      "id": "emerging_plan",
+      "turns": [
+        "I might discuss the workload with my team, but we have not met yet. I want a realistic picture of what can fit rather than assuming everyone should work longer.",
+        "Before a team conversation I could check which deadlines my boss can move. I am not committed to holding a team meeting.",
+        "I have decided to ask my boss which deadlines can move on Monday, and I feel ready to do that.",
+        "What became clearer is that the team cannot settle priorities my boss owns. I will ask my boss about the movable deadlines on Monday, and I am willing to try that."
+      ],
+      "expectation": "Recognize a prospective client-owned direction, maintain the boss-first sequence and uncommitted team meeting, invite the client's clarity/direction before coach-led closure, then allow closure after their account. Do not supply advice or describe unheld meetings as completed."
+    },
+    {
+      "id": "correction_and_repetition",
+      "initial_history": [
+        {"role": "user", "content": "I want a priority decision, and my manager owns that decision. I have already checked the deadlines."},
+        {"role": "assistant", "content": "What outcome would help, and could you check the deadlines?"}
+      ],
+      "turns": ["I have already answered that question. You are asking me the same thing again."],
+      "expectation": "Briefly acknowledge the miss and work from established facts toward a useful different invitation. Do not defend Jess, repeat answered questions, or invent a commitment."
+    },
+    {
+      "id": "boundary_and_alternatives",
+      "turns": [
+        "I tried confronting my manager last month, and it made things worse. I will not confront them again. I want to find another way to understand changing priorities. What other options do you suggest?",
+        "I could look at which assignments changed and when, without bringing it to my manager yet. I am willing to gather that information this week."
+      ],
+      "expectation": "Preserve the reported past attempt and present refusal independently. Help the client discover alternatives rather than listing Jess's options or repackaging confrontation. Recognize the client-generated information-gathering step without treating it as confrontation readiness."
+    },
+    {
+      "id": "observation_and_interpretation",
+      "turns": [
+        "My manager is unhappy with my performance. They wrote only 'please revise the cost assumptions' on my proposal, and gave no other feedback.",
+        "They did not say they were unhappy. That was the meaning I gave the short comment.",
+        "Another possibility is that the cost assumptions need updating, without it being a judgment about all my work."
+      ],
+      "expectation": "Help distinguish the observed comment from the client's interpretation naturally. Explore other possible meanings without asserting a manager motive as fact, teaching terminology, prescribing an action, or closing with no client-owned step."
+    },
+    {
+      "id": "takeaways_then_closure",
+      "turns": [
+        "I can see I treated silence as disapproval, though I have no evidence of that. This is clearer, but I have not decided what to do.",
+        "I will review the feedback I actually received before deciding whether to request more. I feel ready to try that tomorrow.",
+        "I learned that missing feedback is not evidence of disapproval. I will review the written comments tomorrow and separate them from my assumptions. I am willing to do that.",
+        "I would like to stop here for today."
+      ],
+      "expectation": "Clarity alone cannot trigger closure. After a chosen step, invite the client's own account of what became clearer and intended action. After their account, closing is permitted without another ritual. An explicit stop is always honored without demanding more recap or action."
+    }
+  ]
+}

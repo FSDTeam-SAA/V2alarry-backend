@@ -1,0 +1,48 @@
+{
+  "summary": true,
+  "rubric": ["client_ownership", "selective_confirmation", "insight_separate_from_choice", "closure_timing"],
+  "scenarios": [
+    {
+      "id": "choice_without_insight",
+      "holdout": true,
+      "initial_history": [
+        {"role": "user", "content": "I coordinate library shifts. Cover keeps changing and I want to understand what changes before deciding how to respond."},
+        {"role": "assistant", "content": "What direction would you choose to explore?"}
+      ],
+      "turns": ["I will compare the two published rotas tomorrow, and I feel ready to do that. That is my chosen next step."],
+      "expectation": "Classify clarity as choice_only, not insight. A concrete next step plus readiness is not an account of learning. Invite a missing account naturally without coach-written advice; do not offer closure."
+    },
+    {
+      "id": "decision_is_not_discovery",
+      "holdout": true,
+      "initial_history": [
+        {"role": "user", "content": "I lead an installation crew. Several jobs have moved between dates and I want to understand what the office is changing."},
+        {"role": "assistant", "content": "What would you like to do next?"}
+      ],
+      "turns": ["I have made a decision: I will list the dates that changed and ask the coordinator about them on Friday. I am willing to try that."],
+      "expectation": "A declaration of a decision must remain choice_only for clarity. Record the chosen step independently, but do not infer insight or offer to close."
+    },
+    {
+      "id": "ordinary_language_insight",
+      "holdout": true,
+      "initial_history": [
+        {"role": "user", "content": "I supervise a repair team. I called our slow handoffs an effort problem, but the records show each job waiting for one approval."},
+        {"role": "assistant", "content": "What does the point where jobs wait tell you about the delay?"}
+      ],
+      "turns": ["These are approvals waiting on one person, rather than a lack of effort from the team. I will ask the approver about those waits tomorrow and I am willing to do that."],
+      "expectation": "Recognize the client-owned distinction as insight without requiring special insight phrases. Cite its exact clause, separately from the plan. The full account can support closure without another recap."
+    },
+    {
+      "id": "earlier_insight_current_step",
+      "holdout": true,
+      "initial_history": [
+        {"role": "user", "content": "I manage a venue and want to deal with changes to event priorities without asking staff to work longer."},
+        {"role": "assistant", "content": "Who can change those priorities?"},
+        {"role": "user", "content": "My staff cannot change the priorities that the director sets. I was treating an authority question as a staffing problem."},
+        {"role": "assistant", "content": "What do you want to do with that distinction?"}
+      ],
+      "turns": ["I will ask the director which event priority can move on Tuesday, and I feel ready to try that."],
+      "expectation": "Use the earlier raw client account as insight and the current reply as step and willingness. Do not misclassify the current plan itself as insight, or require the client to repeat an account already supplied."
+    }
+  ]
+}

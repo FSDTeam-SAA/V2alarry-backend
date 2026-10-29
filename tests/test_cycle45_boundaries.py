@@ -110,7 +110,7 @@ class Cycle45BoundaryTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotEqual(result.next_coaching_move, "teach_selectively")
         self.assertTrue(result.action_context[0].discussion_declined)
 
-    def test_topic_refusal_does_not_block_conceptual_help_on_a_different_topic(self):
+    def test_topic_refusal_allows_client_led_exploration_of_a_different_topic(self):
         state = self.previous(readiness="ready", discussion_declined=True)
         other_action = state.action_context[0].model_copy(update={
             "id": "another-topic", "action": "delegate a report", "discussion_declined": False,
@@ -124,7 +124,8 @@ class Cycle45BoundaryTests(unittest.IsolatedAsyncioTestCase):
             "transition_basis": ["grounded_evidence", "knowledge_gap_observed"],
         })
         result = CoachingPolicyService.enforce(state)
-        self.assertEqual(result.next_coaching_move, "teach_selectively")
+        self.assertEqual(result.next_coaching_move, "explore_options")
+        self.assertTrue(result.action_context[0].discussion_declined)
 
     def test_denied_execution_permission_cannot_consolidate_commitment(self):
         state = possibility_state(

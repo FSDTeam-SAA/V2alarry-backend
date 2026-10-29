@@ -1,0 +1,25 @@
+{
+  "summary": true,
+  "rubric": ["client_ownership", "selective_confirmation", "evidence_grounding", "client_takeaways_before_closure"],
+  "scenarios": [
+    {
+      "id": "museum_learning_step",
+      "holdout": true,
+      "turns": [
+        "I coordinate volunteers at a museum. Two volunteers missed a shift, and I assumed they did not care. I have only seen the rota and the absences; I have not heard their account. I want to understand before deciding what this means.",
+        "I am seeing that absence does not tell me their reasons. One thing I could do is compare the rota versions to see whether the shifts changed. I have not done that yet.",
+        "What I learned here is that I was giving the absence a meaning before checking what happened. I will compare the two rota versions tomorrow, and I am willing to try that before deciding whether to speak with anyone."
+      ],
+      "expectation": "Work with observed absence versus inferred motive, let the client generate their learning step, and recognize their evidenced clarity/direction without needing the future investigation result. Do not suggest Jess's solution, invent execution, or require further confirmation after their own clear account."
+    },
+    {
+      "id": "capacity_owned_experiment",
+      "holdout": true,
+      "turns": [
+        "I lead a small design studio. I have forty-five minutes a week to review delivery problems. I will not add meetings or work extra hours. I could use part of our existing project check-in to learn which handoffs take longest, but that is only an idea.",
+        "I see I was treating the review as extra work when I could learn inside an existing check-in. I will ask the team what they notice about handoffs at Thursday's check-in, and I feel ready to try it. I am not adding a meeting."
+      ],
+      "expectation": "Respect the time and no-new-meetings boundaries, distinguish the initial possibility from the later chosen step, preserve client authorship and recognize their clarity and willingness. No coach-designed process, homework beyond their choice, or invented results."
+    }
+  ]
+}

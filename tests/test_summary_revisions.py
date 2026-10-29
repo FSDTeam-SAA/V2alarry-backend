@@ -1,6 +1,7 @@
 import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
+from pydantic import ValidationError
 
 from app.schemas.coaching import CoachingSummaryData, CoachingWorkingState
 from app.services.coaching_memory_service import CoachingMemoryService, WorkingStateExtractionError
@@ -37,14 +38,17 @@ class SummaryRevisionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.next_experiment, previous.next_experiment)
 
     async def test_a_mismatched_clear_fails_instead_of_erasing_another_commitment(self):
+        message = "I have decided to stop observing my reactions."
         llm = SimpleNamespace(generate_structured=AsyncMock(return_value={
             "commitment_change": {"operation": "clear", "previous_value": "A different commitment",
-                "action_id": None, "evidence": [{"source": "current_message", "excerpt": "No"}]},
+                "action_id": "observe-reactions", "evidence": [{"source": "current_message", "excerpt": message}]},
         }))
+        state = CoachingWorkingState(action_context=[{"id": "observe-reactions", "actor": "client",
+            "action": "observe my reactions", "status": "abandoned", "status_evidence": message, "evidence": [message]}])
         with self.assertRaises(WorkingStateExtractionError):
             await CoachingMemoryService(llm).refresh_summary(
                 previous_summary=CoachingSummaryData(commitment="Observe my reactions."),
-                working_state=CoachingWorkingState(), user_message="No", assistant_response="Understood.")
+                working_state=state, user_message=message, assistant_response="Understood.")
 
     async def test_replace_requires_client_evidence_and_existing_action_gate(self):
         message = "I choose to observe one reaction tomorrow."
@@ -59,6 +63,11 @@ class SummaryRevisionTests(unittest.IsolatedAsyncioTestCase):
                 coaching_stage="action" if action_allowed else "discovery",
                 next_coaching_move="develop_experiment" if action_allowed else "clarify",
                 transition_basis=["tested_understanding", "user_owned_outcome"] if action_allowed else [])
-            result = await service.refresh_summary(previous_summary=None, working_state=state,
-                user_message=message, assistant_response="What will you notice?")
-            self.assertEqual(result.commitment, "Observe one reaction tomorrow." if action_allowed else None)
+            if not action_allowed:
+                with self.assertRaises(ValidationError):
+                    await service.refresh_summary(previous_summary=None, working_state=state,
+                        user_message=message, assistant_response="What will you notice?")
+            else:
+                result = await service.refresh_summary(previous_summary=None, working_state=state,
+                    user_message=message, assistant_response="What will you notice?")
+                self.assertEqual(result.commitment, "Observe one reaction tomorrow.")

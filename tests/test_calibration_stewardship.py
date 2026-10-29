@@ -59,14 +59,14 @@ class ConversationStewardshipTests(unittest.TestCase):
         })
         self.assertEqual(CoachingPolicyService.enforce(state).next_coaching_move, "clarify")
 
-    def test_earned_teaching_still_repairs_a_stalled_question(self):
+    def test_stalled_question_shifts_focus_while_teaching_is_deferred(self):
         state = stalled_state(
             next_coaching_move="teach_selectively", client_response_to_last_move="refined",
             transition_basis=["knowledge_gap_observed"],
         )
-        self.assertEqual(CoachingPolicyService.enforce(state).next_coaching_move, "teach_selectively")
+        self.assertEqual(CoachingPolicyService.enforce(state).next_coaching_move, "shift_focus")
 
-    def test_requested_explanation_takes_precedence_over_readiness_for_prior_question(self):
+    def test_requested_explanation_does_not_reopen_declined_direction(self):
         state = stalled_state(
             next_coaching_move="teach_selectively", client_response_to_last_move="not_ready",
             transition_basis=["knowledge_gap_observed"],
@@ -74,7 +74,7 @@ class ConversationStewardshipTests(unittest.TestCase):
                                 "client_requested_pause": False, "client_requested_teaching": True},
         )
         decision = CoachingPolicyService.enforce(state)
-        self.assertEqual(decision.next_coaching_move, "teach_selectively")
+        self.assertEqual(decision.next_coaching_move, "shift_focus")
         self.assertEqual(CoachingPolicyService.enforce(decision), decision)
 
     def test_unrequested_teaching_does_not_bypass_a_declined_direction(self):

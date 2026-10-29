@@ -162,7 +162,7 @@ async def evaluate(args):
                     turn["policy"] = policy
                     turn["assistant"] = await metered.generate(
                         system_prompt=LEADERSHIP_COACH_SYSTEM_PROMPT, user_message=user_message,
-                        history=history[-10:], coaching_context=state.model_dump_json(),
+                        history=history[-10:], coaching_context=state.model_dump_json(exclude={"closure_review"}),
                         coaching_policy=policy, knowledge_context=scenario.get("knowledge"),
                     )
                     history.extend([{"role": "user", "content": user_message},

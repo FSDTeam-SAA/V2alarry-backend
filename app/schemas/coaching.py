@@ -19,6 +19,7 @@ CoachingMove = Literal[
     "develop_experiment",
     "consolidate_commitment",
     "support_choice",
+    "invite_takeaways",
     "close_or_continue",
 ]
 EssentialUnknown = Literal[
@@ -159,7 +160,8 @@ class ProgressSelection(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     established: list[EstablishedPoint] = Field(max_length=5)
-    material_unknown: str | None = Field(default=None, max_length=500)
+    material_unknown: str | None = Field(default=None, max_length=500,
+        description="A specific unanswered question that changes the smallest useful next move; not a category label, missing commitment, or a future outcome nobody can know yet. Null when synthesis or scoped support can use what is established.")
     discovery_useful: bool
     understanding_effect: Literal["unknown", "establish", "retain", "revise"]
     recommended_direction: Literal["discovery", "synthesis", "support", "consolidate"]
@@ -185,7 +187,55 @@ class SupportSelection(BaseModel):
     evidence_ids: list[str] = Field(min_length=1, max_length=3,
         description="Evidence for this help request or client-owned direction, separate from evidence for understanding or commitment.")
     boundary_scope: BoundaryScope | None = Field(default=None,
-        description="Classify an existing relevant boundary from its original action_context evidence, including legacy scope unknown. This does not change readiness. Null when no boundary is relevant.")
+        description="Null normally. This is the scope of an EXISTING boundary on support_action_id, NOT the kind of help requested (scope above). If supplied, match that action's saved boundary_scope and cite its original boundary evidence. Classify legacy unknown only from that proof. Never label requested practice as a preparation boundary. This does not change readiness.")
+
+
+RawClientEvidenceId = Annotated[str, Field(pattern=r"^(current_message|history:[0-9]+)$")]
+
+
+class ClientExcerptSelection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    evidence_id: RawClientEvidenceId
+    excerpt: str = Field(min_length=1, max_length=500, pattern=r"\S",
+        description="Copy the precise contiguous client words supporting this claim from the referenced raw message. Preserve punctuation; never paraphrase or quote Jess.")
+
+
+class ClientClaritySelection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["not_described", "choice_only", "insight"] = Field(default="not_described",
+        description="Classify what the client actually describes, separately from choosing an action. insight means an understanding, distinction or perspective they gained; choice_only means a decision, intention or willingness without an account of what became clear; not_described means neither is stated. A desired outcome or action choice alone is not an insight.")
+    evidence: list[ClientExcerptSelection] = Field(default_factory=list, max_length=3,
+        description="For insight, quote the specific clause expressing the client's understanding, not a plan/readiness clause or an undifferentiated message. Ordinary spontaneous language counts; no special insight phrase or before/after formula is required. Empty when no account is available.")
+
+
+class ClosureSelection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    action_id: str | None = Field(default=None, min_length=1, max_length=36,
+        description="Copy the exact matching planned/ongoing action_context id for the client's chosen step, including when their account of clarity is missing. Null only when no chosen action is supported; do not discard an available matching ID during recovery.")
+    next_step_evidence_ids: list[RawClientEvidenceId] = Field(default_factory=list, max_length=3,
+        description="Assess independently: raw client evidence describing what they intend to do with their clarity, matching action_id. Learning or research can be a step. Empty when absent.")
+    willingness_evidence_ids: list[RawClientEvidenceId] = Field(default_factory=list, max_length=3,
+        description="Assess independently: raw client evidence of willingness to try that step; not merely considering it, permission to rehearse, or agreement with Jess. Empty when absent.")
+
+
+class ClosureAssessment(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    action_id: str = Field(min_length=1, max_length=36)
+    clarity_evidence: list[EvidenceReference] = Field(min_length=1, max_length=3)
+    next_step_evidence: list[EvidenceReference] = Field(min_length=1, max_length=3)
+    willingness_evidence: list[EvidenceReference] = Field(min_length=1, max_length=3)
+
+
+class ClosureReview(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["supported", "not_supported", "unavailable"]
+    reason: str = Field(min_length=1, max_length=300)
+    duration_ms: float = Field(ge=0)
 
 
 class ActionContextUpdate(BaseModel):
@@ -194,7 +244,7 @@ class ActionContextUpdate(BaseModel):
     id: str | None = Field(default=None, max_length=36, description="Reuse the exact existing action ID for wording, preparation, or starting that action. Null only for a distinct new action; omit unchanged actions entirely.")
     actor: str = Field(min_length=1, max_length=100)
     action: str = Field(min_length=1, max_length=500,
-        description="The action the client actually describes, never an inferred opposite or goal. 'I keep reviewing their work' describes reviewing their work, NOT stopping it. Do not invent a contemplated action from a concern. For an existing record copy its exact action; wording/preparation refers to that underlying action.")
+        description="The underlying action, without dates, lifecycle labels or readiness; retain timing in narrative facts and exact evidence. Never infer an opposite or goal. For existing records copy the exact action and ID. Recommitting or changing the date of the SAME task does not create a new underlying action, even if the client calls it a new commitment. Wording/preparation also refers to that underlying action.")
     status: ActionStatus | None = Field(default=None,
         description="Real action lifecycle only. Must be null for preparation/topic permission updates; practice permission cannot establish a planned action.")
     readiness: ActionReadiness | None = Field(default=None,
@@ -203,7 +253,15 @@ class ActionContextUpdate(BaseModel):
         description="information_limit means missing information/examples/resources/ability, not unwillingness; these updates cannot establish action/readiness. readiness_boundary requires expressed unreadiness or refusal within the stated scope; discomfort alone is insufficient. EVERY ready update requires readiness_confirmation. Intention alone cannot support ready; do not invent a narrower action.")
     evidence: list[EvidenceReference] = Field(min_length=1, max_length=3)
     boundary_scope: BoundaryScope | None = Field(default=None,
-        description="action: willingness to do it, preparation: willingness for wording/practice, topic: willingness to discuss, unknown: ambiguous. For preparation/topic, readiness updates only that permission, never readiness to act. Ready with readiness_confirmation lifts that scoped refusal. Awkwardness alone is not unwillingness.")
+        description="Null unless recording or changing a genuine boundary with basis readiness_boundary, readiness_confirmation or correction. A practice request alone is not a boundary update; omit unchanged actions. action: doing it, preparation: wording/practice, topic: discussion, unknown: ambiguous. Preparation/topic changes only that permission, never readiness to act. Ready with readiness_confirmation lifts that scoped refusal. Awkwardness alone is not unwillingness.")
+    status_basis: Literal["consideration", "intention", "reported_action", "correction"] | None = Field(default=None,
+        description="Independent proof classification for a non-null status. Use this with status_evidence when one message changes both status and readiness. The shared basis is only the legacy fallback.")
+    status_evidence: list[EvidenceReference] | None = Field(default=None, min_length=1, max_length=3,
+        description="Exact client proof of the real action status, independently of willingness or refusal.")
+    readiness_basis: Literal["readiness_boundary", "readiness_confirmation", "correction"] | None = Field(default=None,
+        description="Independent proof classification for non-null readiness. Ready requires readiness_confirmation here or in legacy basis. A past attempt is not willingness to repeat it.")
+    readiness_evidence: list[EvidenceReference] | None = Field(default=None, min_length=1, max_length=3,
+        description="Exact client proof of current willingness, unreadiness or refusal within boundary_scope, independently of action status.")
 
 
 class ClientActionContext(BaseModel):
@@ -228,9 +286,12 @@ class CoachingEvidenceState(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     current_concern: str | None = Field(default=None, max_length=2000)
-    reported_facts: list[str] = Field(default_factory=list, max_length=20)
-    observations: list[str] = Field(default_factory=list, max_length=20)
-    interpretations_feelings: list[str] = Field(default_factory=list, max_length=20)
+    reported_facts: list[str] = Field(default_factory=list, max_length=20,
+        description="Reported events, constraints, first-person experience and what was actually said, preserving attribution. Not every declarative client assertion is an established fact: inferred emotions, motives or broad judgments about another person belong in interpretations_feelings unless supported by reported words or concrete observations.")
+    observations: list[str] = Field(default_factory=list, max_length=20,
+        description="What the client actually saw, heard or received, including specific comments or behavior. Preserve the difference between this evidence and the meaning the client gives it.")
+    interpretations_feelings: list[str] = Field(default_factory=list, max_length=20,
+        description="Client feelings and inferred meanings, including conclusions about another person's emotion, intention or judgment. Keep these attributed even when the client states them confidently as fact. Categorizing a claim here does not mean the client has recognized it as an interpretation.")
     possible_anchors: list[str] = Field(default_factory=list, max_length=10)
     prior_attempts: list[str] = Field(default_factory=list, max_length=20)
     held_clues: list[HeldClue] = Field(default_factory=list, max_length=10)
@@ -258,6 +319,8 @@ class CoachingWorkingState(CoachingEvidenceState):
     understanding_context: UnderstandingContext | None = None
     progress_assessment: ProgressAssessment | None = None
     support_assessment: SupportAssessment | None = None
+    closure_assessment: ClosureAssessment | None = None
+    closure_review: ClosureReview | None = None
 
 
 class RelevantSummarySelection(BaseModel):
@@ -286,9 +349,22 @@ class CoachingTurnAssessment(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    interpretation_gap: bool = Field(default=False,
+        description="Does the client's own wording treat an inferred meaning as fact without direct evidence? Judge the raw client text, not the extractor's labels. Another person's inferred emotion, motive or judgment is not established merely because the client states it declaratively. True even if extraction already put it under interpretations_feelings. False for the client's own feeling or a meaning they explicitly recognize as tentative.")
+    interpretation_evidence_ids: list[str] = Field(default_factory=list, max_length=3,
+        description="For a true interpretation_gap, cite raw current_message/history evidence of the client's conclusion and the observation it rests on. Otherwise empty.")
     focus_assessment: FocusSelection
     interaction_assessment: InteractionSelection | None = Field(...)
     inquiry_assessment: InquiryAssessment | None = None
+    requested_support: RequestedSupport = Field(default="none",
+        description="Classify what the client ASKS, before selecting the response. A request for how to begin is action_wording even when readiness or understanding is incomplete; do not choose none merely because you plan discovery.")
+    support_action_id: str | None = Field(default=None, max_length=36,
+        description="Existing underlying action ID for the current help or chosen next step; do not attach the boundary on a different action.")
+    closure_assessment: ClosureSelection = Field(default_factory=ClosureSelection,
+        description="Select each available raw-client reference for the chosen next step and willingness independently, even if clarity is missing. Empty lists for missing elements, never null. A focused raw-client check verifies the account of understanding before the server permits closure. Unknown future results do not block closure.")
+    progress_assessment: ProgressSelection | None = None
+    understanding_assessment: UnderstandingSelection | None = None
+    support_assessment: SupportSelection | None = None
     coaching_stage: CoachingStage
     next_coaching_move: CoachingMove
     client_response_to_last_move: ClientResponseToLastMove
@@ -300,13 +376,6 @@ class CoachingTurnAssessment(BaseModel):
     user_owned_outcome: bool = Field(description="An outcome or experiment the client chooses in their own words; not acceptance of Jess's suggestion")
     tested_understanding: bool = Field(description="Shared understanding supported explicitly, demonstrated naturally, or retained without material contradiction; never merely acknowledgment. No mandatory confirmation question.")
     transition_evidence_ids: list[str] = Field(max_length=3)
-    requested_support: RequestedSupport = Field(default="none",
-        description="Classify the client's request, not the response you intend to offer. 'How would I open that meeting?' is action_wording even when readiness is blocked, never exploration or conceptual_explanation.")
-    support_action_id: str | None = Field(default=None, max_length=36,
-        description="Existing underlying action ID for practical support, including opening, wording, preparation, or rehearsal of that action. Prefer the matching action with an active readiness boundary over a narrower paraphrase.")
-    progress_assessment: ProgressSelection | None = None
-    understanding_assessment: UnderstandingSelection | None = None
-    support_assessment: SupportSelection | None = None
     ownership_evidence_ids: list[str] = Field(default_factory=list, max_length=3)
     knowledge_evidence_ids: list[str] = Field(default_factory=list, max_length=3)
 
@@ -347,3 +416,21 @@ class SummaryActionChange(BaseModel):
 class CoachingSummaryRevision(CoachingSummaryData):
     commitment_change: SummaryActionChange = Field(default_factory=SummaryActionChange)
     next_experiment_change: SummaryActionChange = Field(default_factory=SummaryActionChange)
+
+
+class PreservedSummaryAction(SummaryActionChange):
+    operation: Literal["preserve"] = "preserve"
+
+
+class WithdrawableSummaryAction(SummaryActionChange):
+    operation: Literal["preserve", "clear"] = "preserve"
+
+
+class PreservedCoachingSummaryRevision(CoachingSummaryRevision):
+    commitment_change: PreservedSummaryAction = Field(default_factory=PreservedSummaryAction)
+    next_experiment_change: PreservedSummaryAction = Field(default_factory=PreservedSummaryAction)
+
+
+class WithdrawableCoachingSummaryRevision(CoachingSummaryRevision):
+    commitment_change: WithdrawableSummaryAction = Field(default_factory=WithdrawableSummaryAction)
+    next_experiment_change: WithdrawableSummaryAction = Field(default_factory=WithdrawableSummaryAction)

@@ -104,7 +104,7 @@ async def verify(url: str, output: Path, serve_port: int = 0, live_model: bool =
                         "boundary_scope": None if "decided to abandon" in message else "action",
                         "evidence": [{"source": "current_message", "excerpt": message}]}]
                 return CoachingEvidenceState(reported_facts=["The client can negotiate priorities"], action_updates=updates)
-            if schema is CoachingSummaryRevision:
+            if issubclass(schema, CoachingSummaryRevision):
                 changes = {}
                 previous = payload["previous_summary"] or {}
                 abandoned = next((item for item in payload["working_state"]["action_context"] if item["status"] == "abandoned"), None)
@@ -231,13 +231,20 @@ async def verify(url: str, output: Path, serve_port: int = 0, live_model: bool =
                 response = await client.post("/api/v1/chat/", headers=headers,
                     json={"message": message, "conversation_id": conversation_id})
                 assert response.status_code == 200, response.text
-            assert response.json()["metadata"]["next_coaching_move"] == "support_choice"
+            if live_model:
+                # Larry's newer guidance permits different client-led moves, never execution here.
+                assert response.json()["metadata"]["coaching_stage"] != "action"
+            else:
+                assert response.json()["metadata"]["next_coaching_move"] == "support_choice"
             boundary_state = await ChatHistoryService().get_working_state(conversation_id=conversation_id, user_id=str(user_ids[0]))
             assert any(item["readiness"] == "not_ready" for item in boundary_state.state["action_context"])
             checks["action_boundary_resume"] = True
-            assert boundary_state.state["understanding_context"]["status"] == "supported"
+            resumed_state = CoachingWorkingState.model_validate(boundary_state.state)
+            if not live_model:
+                assert resumed_state.understanding_context is not None
+                assert resumed_state.understanding_context.status == "supported"
             assert all(item["status"] != "planned" for item in boundary_state.state["action_context"])
-            checks["preparation_without_commitment"] = True
+            checks["requested_preparation_without_commitment"] = True
             response = await client.post("/api/v1/chat/", headers=headers, json={
                 "message": "I have decided to abandon that meeting request. I no longer want to do it.", "conversation_id": conversation_id})
             assert response.status_code == 200, response.text
@@ -260,6 +267,7 @@ async def verify(url: str, output: Path, serve_port: int = 0, live_model: bool =
         summary = (await db.execute(select(CoachingSummary).where(CoachingSummary.conversation_id == uuid_module.UUID(conversation_id)))).scalar_one()
         assert summary.source_turn_count == 5 and summary.generation_status == "current"
         assert summary.commitment is None
+        assert summary_results == ["updated"] * 5, summary_results
         checks["abandoned_commitment_cleared"] = True
         checks["continuity_refresh"] = True
         # Reproduce the timestamp tie in legacy rows using only this run's synthetic pair.
@@ -274,7 +282,7 @@ async def verify(url: str, output: Path, serve_port: int = 0, live_model: bool =
     # A new service reads persisted continuity rather than relying on an in-memory workflow.
     persisted = await ChatHistoryService().get_working_state(conversation_id=conversation_id, user_id=str(user_ids[0]))
     assert persisted.source_turn_count == 5
-    assert not {"focus_assessment", "interaction_assessment", "inquiry_assessment", "action_updates", "requested_support", "support_action_id", "progress_assessment", "support_assessment"} & persisted.state.keys()
+    assert not {"focus_assessment", "interaction_assessment", "inquiry_assessment", "action_updates", "requested_support", "support_action_id", "progress_assessment", "support_assessment", "closure_assessment", "closure_review"} & persisted.state.keys()
     checks["state_resume"] = True
     from app.core.config import settings
     output.write_text(json.dumps({"checks": checks, "external_model": settings.LLM_MODEL if live_model else "doubled",

@@ -149,7 +149,11 @@ class ChatHistoryService:
                 durable_state = {key: value for key, value in working_state.items()
                                  if key not in {"focus_assessment", "interaction_assessment", "inquiry_assessment",
                                                 "action_updates", "requested_support", "support_action_id",
-                                                "progress_assessment", "support_assessment"}}
+                                                "progress_assessment", "support_assessment", "closure_assessment", "closure_review"}}
+                # Retain the existing consolidation category for older state readers.
+                for field in ("next_coaching_move", "last_coaching_move"):
+                    if durable_state.get(field) == "invite_takeaways":
+                        durable_state[field] = "close_or_continue"
                 state_result = await db.execute(
                     select(CoachingWorkingState).where(
                         CoachingWorkingState.conversation_id == conv_uuid

@@ -72,6 +72,39 @@ def conversation_action(**changes):
 
 
 class Cycle5PolicyTests(unittest.TestCase):
+    def test_understanding_repair_does_not_also_require_a_new_discovery_question(self):
+        state = CoachingWorkingState(reported_facts=["The review is only a possibility."],
+            next_coaching_move="test_understanding", client_response_to_last_move="corrected")
+        policy = CoachingPolicyService.build_response_policy(state)
+        self.assertNotIn("reopen discovery with one precise question", policy)
+        self.assertIn("invite", policy.lower())
+
+    def test_stalled_unhelpful_inquiry_repairs_picture_before_more_discovery(self):
+        for feedback in ("refined", "corrected", "not_ready", "declined"):
+            with self.subTest(feedback=feedback):
+                state = CoachingWorkingState.model_validate({
+                    "reported_facts": ["The client has identified a possible review; it has not happened."],
+                    "next_coaching_move": "shift_focus",
+                    "client_response_to_last_move": feedback,
+                    "inquiry_assessment": {"progress": "stalled", "reason": "The question assumed a result that does not exist.", "client_requested_pause": False},
+                    "interaction_assessment": {"usefulness": "possibly_unhelpful", "observation": "The client corrected the premise of the question.", "evidence": evidence("We have not held that review.")[0]},
+                })
+                result = CoachingPolicyService.enforce(state)
+                self.assertEqual(result.next_coaching_move, "test_understanding")
+                self.assertEqual(CoachingPolicyService.enforce(result), result)
+
+    def test_requested_preparation_without_shared_picture_tests_understanding_not_readiness(self):
+        state = possibility_state(
+            understanding_context=None,
+            progress_assessment=progress(understanding_effect="unknown"),
+            action_context=[conversation_action()], support_action_id="conversation-with-boss",
+        )
+        result = CoachingPolicyService.enforce(state)
+        self.assertEqual(result.next_coaching_move, "test_understanding")
+        self.assertEqual(result.action_context, state.action_context)
+        self.assertFalse(CoachingPolicyService.action_is_permitted(result))
+        self.assertEqual(CoachingPolicyService.enforce(result), result)
+
     def test_stalled_inquiry_preserves_selected_useful_synthesis(self):
         state = CoachingWorkingState.model_validate({
             "reported_facts": ["The possible team meeting has not happened; there are no results yet."],
@@ -192,12 +225,12 @@ class Cycle5PolicyTests(unittest.TestCase):
         self.assertEqual(first.next_coaching_move, "support_choice")
         self.assertEqual(CoachingPolicyService.enforce(first), first)
 
-    def test_consolidation_can_check_completion_without_inventing_commitment(self):
+    def test_clarity_without_a_chosen_step_continues_client_led_exploration(self):
         result = CoachingPolicyService.enforce(possibility_state(
             next_coaching_move="close_or_continue", requested_support="none", support_assessment=None,
             progress_assessment=progress(recommended_direction="consolidate"),
         ))
-        self.assertEqual(result.next_coaching_move, "close_or_continue")
+        self.assertEqual(result.next_coaching_move, "explore_options")
         self.assertNotIn("user_owned_outcome", result.transition_basis)
 
     def test_preparation_permission_cannot_authorize_an_action_stage(self):

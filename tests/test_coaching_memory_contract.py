@@ -165,7 +165,7 @@ class CoachingMemoryContractTests(unittest.TestCase):
         self.assertIn("Acknowledge the correction", policy)
         self.assertIn("without defending the prior approach", policy)
 
-    def test_policy_blocks_knowledge_frameworks_until_teaching_is_earned(self):
+    def test_policy_defers_framework_teaching_even_with_observed_gap(self):
         discovery_policy = CoachingPolicyService.build_response_policy(
             CoachingWorkingState(
                 current_concern="I feel stuck with a colleague.",
@@ -185,8 +185,9 @@ class CoachingMemoryContractTests(unittest.TestCase):
             )
         )
 
-        self.assertIn("Do not introduce, cite, or teach a framework", discovery_policy)
-        self.assertIn("demonstrated knowledge gap permits", teaching_policy)
+        self.assertIn("Teaching and coach-supplied examples are deferred", discovery_policy)
+        self.assertIn("Teaching and coach-supplied examples are deferred", teaching_policy)
+        self.assertNotIn("Permitted next move: teach selectively", teaching_policy)
 
     def test_summary_does_not_replace_confirmed_commitment_with_a_coach_suggestion(self):
         class _SummaryLLM:

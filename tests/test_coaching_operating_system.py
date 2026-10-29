@@ -25,9 +25,9 @@ class CoachingPolicyInvariantTests(unittest.TestCase):
 
         self.assertEqual(decision.coaching_stage, "discovery")
         self.assertEqual(decision.next_coaching_move, "clarify")
-        self.assertIn("knowledge_gap", decision.essential_unknowns)
+        self.assertNotEqual(decision.next_coaching_move, "teach_selectively")
 
-    def test_teaching_with_an_observed_knowledge_gap_is_allowed(self):
+    def test_teaching_with_an_observed_knowledge_gap_is_deferred(self):
         state = CoachingWorkingState(
             reported_facts=["The leader only knows outcome goals."],
             coaching_stage="reflection",
@@ -37,7 +37,7 @@ class CoachingPolicyInvariantTests(unittest.TestCase):
 
         decision = CoachingPolicyService.enforce(state)
 
-        self.assertEqual(decision.next_coaching_move, "teach_selectively")
+        self.assertEqual(decision.next_coaching_move, "clarify")
 
     def test_consecutive_teaching_returns_ownership_to_the_client(self):
         state = CoachingWorkingState(
@@ -50,8 +50,8 @@ class CoachingPolicyInvariantTests(unittest.TestCase):
 
         decision = CoachingPolicyService.enforce(state)
 
-        self.assertEqual(decision.coaching_stage, "reflection")
-        self.assertEqual(decision.next_coaching_move, "test_understanding")
+        self.assertEqual(decision.coaching_stage, "discovery")
+        self.assertEqual(decision.next_coaching_move, "clarify")
 
     def test_correction_invalidates_the_previous_understanding_test(self):
         state = CoachingWorkingState(
@@ -318,7 +318,7 @@ class CoachingPromptContractTests(unittest.TestCase):
         self.assertIn("shift focus", response_prompt)
         self.assertIn("challenge tentatively", response_prompt)
         self.assertIn("reduce coach content", response_prompt)
-        self.assertIn("return ownership", response_prompt)
+        self.assertIn("leader in control", response_prompt)
         self.assertIn("directly useful", retrieval_prompt)
         self.assertIn("empty list", retrieval_prompt)
 
@@ -351,7 +351,7 @@ class ClientDocumentScenarioTests(unittest.TestCase):
         self.assertEqual(opening.next_coaching_move, "clarify")
         self.assertEqual(action.next_coaching_move, "develop_experiment")
 
-    def test_mario_trace_earns_teaching_and_then_returns_to_application(self):
+    def test_mario_trace_keeps_ownership_while_teaching_is_deferred(self):
         teaching = CoachingPolicyService.enforce(
             CoachingWorkingState(
                 reported_facts=["The leader only recognizes outcome goals."],
@@ -370,8 +370,8 @@ class ClientDocumentScenarioTests(unittest.TestCase):
             )
         )
 
-        self.assertEqual(teaching.next_coaching_move, "teach_selectively")
-        self.assertEqual(after_teaching.next_coaching_move, "test_understanding")
+        self.assertEqual(teaching.next_coaching_move, "clarify")
+        self.assertEqual(after_teaching.next_coaching_move, "clarify")
 
     def test_judy_trace_preserves_generation_and_repairs_correction(self):
         generation_policy = CoachingPolicyService.build_response_policy(

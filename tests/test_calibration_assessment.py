@@ -74,22 +74,22 @@ class TurnAssessmentTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["working_state"]["coaching_stage"], "discovery")
         self.assertNotIn("private detail", str(result))
 
-    def test_material_refinement_can_earn_teaching_without_an_action_permission(self):
+    def test_material_refinement_keeps_teaching_deferred_without_action_permission(self):
         state = CoachingWorkingState(reported_facts=["I have never learned the distinction"],
             next_coaching_move="teach_selectively", client_response_to_last_move="refined",
             transition_basis=["knowledge_gap_observed", "tested_understanding"])
         result = CoachingPolicyService.enforce(state)
-        self.assertEqual(result.next_coaching_move, "teach_selectively")
+        self.assertEqual(result.next_coaching_move, "clarify")
         self.assertNotIn("tested_understanding", result.transition_basis)
         self.assertFalse(CoachingPolicyService.action_is_permitted(result))
 
-    def test_explicit_corrective_request_can_earn_one_concise_explanation(self):
+    def test_explicit_corrective_request_still_uses_client_led_discovery(self):
         state = CoachingWorkingState(reported_facts=["The client asks to learn a specific relevant distinction"],
             client_response_to_last_move="corrected", next_coaching_move="teach_selectively",
             transition_basis=["knowledge_gap_observed"], last_coaching_move="clarify")
-        self.assertEqual(CoachingPolicyService.enforce(state).next_coaching_move, "teach_selectively")
+        self.assertEqual(CoachingPolicyService.enforce(state).next_coaching_move, "clarify")
 
-    def test_unhelpful_question_can_be_repaired_by_earned_teaching(self):
+    def test_unhelpful_question_repairs_understanding_without_teaching(self):
         state = CoachingWorkingState.model_validate({
             "reported_facts": ["The client asks to learn a specific relevant distinction"],
             "client_response_to_last_move": "refined", "next_coaching_move": "teach_selectively",
@@ -98,7 +98,7 @@ class TurnAssessmentTests(unittest.IsolatedAsyncioTestCase):
                 "evidence": {"source": "current_message", "excerpt": "Please explain that distinction"}},
         })
         result = CoachingPolicyService.enforce(state)
-        self.assertEqual(result.next_coaching_move, "teach_selectively")
+        self.assertEqual(result.next_coaching_move, "test_understanding")
         self.assertNotIn("tested_understanding", result.transition_basis)
         self.assertEqual(CoachingPolicyService.enforce(result), result)
 

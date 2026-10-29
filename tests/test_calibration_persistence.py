@@ -34,9 +34,12 @@ class TurnPersistenceTests(unittest.IsolatedAsyncioTestCase):
                 user_message="I can influence the priorities.", assistant_response="What matters?",
                 metadata={"docs_retrieved": 2, "coaching_trace": {"version": "calibration-2"}},
                 working_state={"reported_facts": ["I can influence priorities"],
+                               "next_coaching_move": "invite_takeaways", "last_coaching_move": "invite_takeaways",
                                "action_context": [{"id": "kept", "readiness": "not_ready"}],
                                "action_updates": [{"private": "transient"}],
                                "requested_support": "action_wording", "support_action_id": "kept",
+                               "closure_assessment": {"action_id": "kept", "clarity_evidence": ["private client proof"]},
+                               "closure_review": {"status": "supported", "reason": "private review", "duration_ms": 1},
                                "interaction_assessment": {"usefulness": "possibly_unhelpful"},
                                "inquiry_assessment": {"progress": "stalled"}}, source_turn_count=3,
             )
@@ -52,6 +55,10 @@ class TurnPersistenceTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("action_updates", saved_state.state)
         self.assertNotIn("requested_support", saved_state.state)
         self.assertNotIn("support_action_id", saved_state.state)
+        self.assertNotIn("closure_assessment", saved_state.state)
+        self.assertNotIn("closure_review", saved_state.state)
+        self.assertEqual(saved_state.state["next_coaching_move"], "close_or_continue")
+        self.assertEqual(saved_state.state["last_coaching_move"], "close_or_continue")
         self.assertEqual(saved_state.state["action_context"], [{"id": "kept", "readiness": "not_ready"}])
 
     async def test_internal_trace_is_saved_without_entering_public_metadata(self):
@@ -67,6 +74,16 @@ class TurnPersistenceTests(unittest.IsolatedAsyncioTestCase):
         stored = nodes.chat_history_service.save_conversation_turn.call_args.kwargs["metadata"]
         self.assertEqual(stored["coaching_trace"], state["decision_trace"])
         self.assertNotIn("coaching_trace", result["metadata"])
+
+    def test_closure_review_diagnostics_do_not_enter_generation_context(self):
+        from app.schemas.coaching import CoachingWorkingState
+
+        state = CoachingWorkingState(reported_facts=["A client-owned fact"], closure_review={
+            "status": "not_supported", "reason": "Private diagnostic", "duration_ms": 12})
+        context = WorkflowNodes._build_coaching_context(relevant_summaries=[], working_state=state)
+        self.assertIn("A client-owned fact", context)
+        self.assertNotIn("closure_review", context)
+        self.assertNotIn("Private diagnostic", context)
 
 
 if __name__ == "__main__":

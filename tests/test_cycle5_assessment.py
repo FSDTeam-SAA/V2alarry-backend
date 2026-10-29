@@ -2,6 +2,7 @@ import json
 import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
+from pydantic import ValidationError
 
 from app.schemas.coaching import CoachingSummaryData, CoachingWorkingState
 from app.services.coaching_memory_service import CoachingMemoryService, WorkingStateExtractionError
@@ -77,9 +78,10 @@ class Cycle5AssessmentTests(unittest.IsolatedAsyncioTestCase):
             "commitment": "Speak to the boss tomorrow.",
             "commitment_change": {"operation": "replace", "previous_value": None,
                 "evidence": [{"source": "current_message", "excerpt": message}]}}))
-        result = await CoachingMemoryService(llm).refresh_summary(previous_summary=None,
-            working_state=possibility_state(), user_message=message, assistant_response="Try this opening.")
-        self.assertIsNone(result.commitment)
+        with self.assertRaises(ValidationError):
+            await CoachingMemoryService(llm).refresh_summary(previous_summary=None,
+                working_state=possibility_state(), user_message=message, assistant_response="What would you say?")
+        self.assertEqual(llm.generate_structured.await_count, 2)
 
     async def test_compatible_refinement_preserves_confirmed_summary_learning(self):
         previous = CoachingSummaryData(primary_discovery="I need a priority decision, not reassurance.")
@@ -91,10 +93,11 @@ class Cycle5AssessmentTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_summary_prompt_excludes_session_judgments_and_understanding_proof(self):
         llm = SimpleNamespace(generate_structured=AsyncMock(return_value={}))
-        await CoachingMemoryService(llm).refresh_summary(previous_summary=None, working_state=possibility_state(),
+        await CoachingMemoryService(llm).refresh_summary(previous_summary=None, working_state=possibility_state(
+            closure_review={"status": "supported", "reason": "private diagnostic", "duration_ms": 1}),
             user_message="Just preparing", assistant_response="Let's try it.")
         payload = json.loads(llm.generate_structured.call_args.kwargs["user_message"])
-        self.assertFalse({"progress_assessment", "support_assessment", "understanding_context"} & payload["working_state"].keys())
+        self.assertFalse({"progress_assessment", "support_assessment", "understanding_context", "closure_review"} & payload["working_state"].keys())
 
     async def test_json_and_streaming_use_identical_validated_preparation_context(self):
         from copy import deepcopy
