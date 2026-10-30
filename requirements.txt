@@ -14,7 +14,7 @@ dnspython==2.8.0
 ecdsa==0.19.2
 email-validator==2.3.0
 fastapi==0.139.0
-filelock==3.29.7
+filelock==4.2.1
 fsspec==2026.6.0
 greenlet==3.5.3
 grpcio==1.82.1
